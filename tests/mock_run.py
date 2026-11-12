@@ -43,6 +43,8 @@ def fake_batch(spec, areas, start="2012-01"):
 
 
 S.oecd_batch = fake_batch
+S.oecd_release = lambda flow, key: S.set_rel(key, "OECD", "2026-11-04")
+S.portwatch_release = lambda service, key: S.set_rel(key, "IMF PortWatch", "2026-11-10")
 S.dbnomics = lambda sid: (_ for _ in ()).throw(RuntimeError("not found"))
 ALL = ["USA", "CHN", "JPN", "DEU", "IND", "GBR", "FRA", "BRA", "NGA", "KEN", "PER", "VNM", "EGY", "ARG", "ZAF", "AUS", "KOR", "MEX"] + list(R.ECONOMIES)
 S.weo_all = lambda code, rels: ({i: pd.Series(rng.uniform(-5, 120, 12), index=pd.to_datetime([f"{y}-07-01" for y in range(2015, 2027)])) for i in set(ALL)}, "WEO:latest")
@@ -56,6 +58,8 @@ S.ecb_fx = lambda cur, start: pd.DataFrame({c: (1.1 if c == "USD" else rng.unifo
 S.treasury_curve = lambda kind="daily_treasury_yield_curve", years=None: pd.DataFrame(
     {c: 3 + np.cumsum(rng.normal(0, .02, len(days))) for c in (["3 Mo", "2 Yr", "10 Yr", "30 Yr"] if "real" not in kind else ["10 YR"])}, index=days)
 S.treasury_debt = lambda: pd.Series(3.6e13 + np.cumsum(rng.uniform(0, 5e9, len(days))), index=days)
+S.us_fiscal_years = lambda: pd.DataFrame([{"fy": fy, "through": pd.Timestamp(f"{fy if m < 10 else fy - 1}-{m:02d}-28") + pd.offsets.MonthEnd(0), "receipts": 4.4e12 * (1.04 ** (fy - 2024)) * (m / 9 if fy == 2027 else 1), "outlays": 6.2e12 * (1.05 ** (fy - 2024)) * (m / 9 if fy == 2027 else 1)}
+                                           for fy, m in [(y, 9) for y in range(2005, 2027)] + [(2027, 10)]])
 S.nyfed_effr = lambda: pd.Series(3.9 + rng.normal(0, .01, len(days)), index=days)
 ports = []
 for i, iso in enumerate(["CHN", "HKG", "JPN", "KOR", "SGP", "IND", "ARE", "SAU", "NLD", "DEU", "FRA", "ITA", "GBR", "USA", "CAN", "BRA", "ZAF", "AUS", "MEX", "ESP"]):

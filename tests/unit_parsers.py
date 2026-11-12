@@ -35,10 +35,10 @@ csv_new = pd.DataFrame(new).to_csv(index=False).encode()
 old = [{"Area": n, "ISO 3 code": c, "Date": d.strftime("%Y-%m-%d"), "Variable": "Demand", "Unit": "TWh",
         "Value": 40} for d in months for n, c in [("France", "FRA"), ("Spain", "ESP")]]
 csv_old = pd.DataFrame(old).to_csv(index=False).encode()
-S._get = lambda u, timeout=60, **k: types.SimpleNamespace(content=csv_new)
+S._get = lambda u, timeout=60, **k: types.SimpleNamespace(headers={}, content=csv_new)
 e = S.ember_monthly()
 assert set(e.iso3) == {"USA", "TUR", "DEU"} and (e.value == 300).all(), e.iso3.unique()
-S._get = lambda u, timeout=60, **k: types.SimpleNamespace(content=csv_old if "long" in u else b"<html>moved</html>")
+S._get = lambda u, timeout=60, **k: types.SimpleNamespace(headers={}, content=csv_old if "long" in u else b"<html>moved</html>")
 e = S.ember_monthly()
 assert set(e.iso3) == {"FRA", "ESP"}
 print("ember ok")
@@ -54,9 +54,9 @@ def fake_get(url, timeout=60, **k):
     if "db.nomics" in url:
         docs = [{"series_code": f"M.T.FRM_LD_NLD.TOT.TOTAL.{g}", "dimensions": {"geo": g},
                  "period": [f"2024-{m:02d}" for m in range(1, 13)], "value": [100 + m for m in range(12)]} for g in ["DE", "EL", "EU27_2020"]]
-        return types.SimpleNamespace(json=lambda: {"series": {"docs": docs, "num_found": 3}})
+        return types.SimpleNamespace(headers={}, json=lambda: {"series": {"docs": docs, "num_found": 3}})
     if "getFullTableDownloadCSV" in url:
-        return types.SimpleNamespace(json=lambda: {"status": "SUCCESS", "object": "https://x/23100216-eng.zip"})
+        return types.SimpleNamespace(headers={}, json=lambda: {"status": "SUCCESS", "object": "https://x/23100216-eng.zip"})
     rows = []
     for d in pd.date_range("2022-01-01", "2026-08-01", freq="MS"):
         for comp, v in [("Total traffic carried", 30e6), ("Intermodal traffic loaded", 3e6)]:
@@ -64,8 +64,33 @@ def fake_get(url, timeout=60, **k):
                          "UOM": "Tonnes", "VALUE": v, "VECTOR": "v1"})
         rows.append({"REF_DATE": d.strftime("%Y-%m"), "GEO": "Eastern Division", "DGUID": "x", "Railway carloadings components": "Total traffic carried", "UOM": "Tonnes", "VALUE": 1, "VECTOR": "v2"})
     buf = io.BytesIO(); zf = _z.ZipFile(buf, "w"); zf.writestr("23100216.csv", pd.DataFrame(rows).to_csv(index=False)); zf.writestr("23100216_MetaData.csv", "x"); zf.close()
-    return types.SimpleNamespace(content=buf.getvalue())
+    return types.SimpleNamespace(headers={}, content=buf.getvalue())
 S._get = fake_get
 a = S.eu_air_freight(); assert set(a) == {"DEU", "GRC"}, a.keys()
 c = S.canada_rail(); assert len(c) == 56 and c.iloc[-1] == 30e6, (len(c), c.iloc[-1])
 print("freight ok")
+
+# release-date parsing from each source's own metadata format
+for raw, want in [("2026-11-04T09:15:00Z", "2026-11-04"), ("Wed, 05 Nov 2026 08:01:02 GMT", "2026-11-05"), (1793460631, "2026-10-31"),
+                  (1793460631000, "2026-10-31"), ("November 4, 2026", "2026-11-04"), ("2026-10-28T23:00:00+0100", "2026-10-28"),
+                  ("2026-10-27T08:30", "2026-10-27"), (None, None), ("garbage", None)]:
+    got = S.parse_when(raw)
+    assert got == want, (raw, got, want)
+S.REL.clear()
+S._get = lambda u, **k: types.SimpleNamespace(headers={}, text='<str:ContentConstraint id="CR_A_DF" validFrom="2026-11-04T09:15:00" validTo="9999">')
+S.oecd_release("OECD.SDD.TPS,DSD_PRICES@DF_PRICES_ALL,1.0", "oecd:x")
+assert S.REL["oecd:x"]["released"] == "2026-11-04", S.REL
+print("release dates ok")
+
+# US fiscal years from MTS Table 1 'Year-to-Date' lines: current FY is the last line printed in each statement
+rows = []
+for rd, fy, prior, cur in [("2025-09-30", 2025, (4.9e12, 6.75e12), (5.23e12, 7.01e12)), ("2026-10-31", 2027, (5.23e12, 7.01e12), (0.40e12, 0.69e12))]:
+    rows.append({"record_date": rd, "record_fiscal_year": str(fy), "record_calendar_month": rd[5:7], "classification_desc": "Year-to-Date", "print_order_nbr": "13",
+                 "current_month_gross_rcpt_amt": str(prior[0]), "current_month_gross_outly_amt": str(prior[1]), "current_month_dfct_sur_amt": "0"})
+    rows.append({"record_date": rd, "record_fiscal_year": str(fy), "record_calendar_month": rd[5:7], "classification_desc": "Year-to-Date", "print_order_nbr": "27",
+                 "current_month_gross_rcpt_amt": str(cur[0]), "current_month_gross_outly_amt": str(cur[1]), "current_month_dfct_sur_amt": "0"})
+S._get = lambda u, **k: types.SimpleNamespace(headers={"Last-Modified": "Thu, 12 Nov 2026 19:00:00 GMT"}, json=lambda: {"data": rows})
+fy = S.us_fiscal_years()
+assert list(fy.fy) == [2025, 2027] and fy.iloc[0].receipts == 5.23e12 and fy.iloc[1].outlays == 0.69e12, fy
+assert S.REL["mts"]["released"] == "2026-11-12"
+print("us fiscal years ok")

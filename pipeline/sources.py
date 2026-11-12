@@ -40,6 +40,36 @@ def _pace(host):
         _LAST[host] = time.time()
 
 
+REL: dict = {}      # release metadata per source key: {"source", "released" (YYYY-MM-DD from the source), "basis", "label"}
+
+
+def parse_when(x):
+    """ISO string, epoch seconds/ms, or HTTP date -> 'YYYY-MM-DD' (None if unparseable)."""
+    if x in (None, "", 0):
+        return None
+    try:
+        if isinstance(x, (int, float)) or (isinstance(x, str) and x.isdigit()):
+            v = float(x)
+            v = v / 1000 if v > 1e11 else v
+            return datetime.utcfromtimestamp(v).strftime("%Y-%m-%d")
+        if isinstance(x, str) and re.match(r"^[A-Za-z]{3}, \d", x):
+            from email.utils import parsedate_to_datetime
+            return parsedate_to_datetime(x).strftime("%Y-%m-%d")
+        return pd.Timestamp(x).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def set_rel(key, source, released=None, basis="source", label=None):
+    """Record when the source itself published the data. basis: 'source' (date from the source's own metadata),
+    'daily' (source publishes each business day; the latest observation date is the publication day), or None."""
+    cur = REL.get(key)
+    released = parse_when(released) if released else None
+    if cur and cur.get("released") and (not released or cur["released"] >= released):
+        return
+    REL[key] = {"source": source, "released": released, "basis": basis if released else None, "label": label}
+
+
 def log(key, ok, note=""):
     STATUS[key] = {"ok": bool(ok), "note": str(note)[:160]}
 
@@ -122,7 +152,18 @@ def oecd_dims(flow):
 _FRAMES: dict = {}
 
 
-def oecd_frame(flow, key, start="2012-01"):
+def oecd_release(flow, key):
+    """OECD publishes each dataflow's last-update time as validFrom on its content constraint."""
+    agency, fid = flow.split(",")[:2]
+    try:
+        r = _get(f"{OECD}/contentconstraint/{agency}/CR_A_{fid}/", timeout=60, tries=2)
+        found = re.findall(r'validFrom="([^"]+)"', r.text) or re.findall(r"<(?:\w+:)?ValidFrom>([^<]+)<", r.text)
+        set_rel(key, "OECD", max(found) if found else None)
+    except Exception:
+        set_rel(key, "OECD", None)
+
+
+def oecd_frame(flow, key, start="2003-01"):
     if (flow, key, start) in _FRAMES:
         return _FRAMES[(flow, key, start)]
     r = _get(f"{OECD}/data/{flow}/{key}?startPeriod={start}&dimensionAtObservation=AllDimensions&format=csvfile",
@@ -134,7 +175,7 @@ def oecd_frame(flow, key, start="2012-01"):
     return df
 
 
-def oecd_pick(flow, filters, prefer=None, start="2012-01"):
+def oecd_pick(flow, filters, prefer=None, start="2003-01"):
     """Fetch with known dimension filters, then choose the best single series using
     `prefer` = {column: [ordered acceptable values]}. Returns (series, chosen_attrs)."""
     dims = oecd_dims(flow)
@@ -196,7 +237,7 @@ _NOT_DIMS = {"OBS_VALUE", "TIME_PERIOD", "STRUCTURE", "STRUCTURE_ID", "STRUCTURE
              "OBS_STATUS_2", "UNIT_MULT", "DECIMALS", "BASE_PER", "CONF_STATUS", "PRICE_BASE_ATTR", "TIME_FORMAT"}
 
 
-def oecd_batch(spec, areas, start="2012-01"):
+def oecd_batch(spec, areas, start="2003-01"):
     """One request for all economies. Returns {iso3: (series, attrs)}."""
     flow = spec["flow"]
     variants = spec.get("filters_alt") or [spec.get("filters", {})]
@@ -240,6 +281,8 @@ def dbnomics(series_id: str) -> pd.Series:
     if not docs:
         raise RuntimeError("not found")
     d = docs[0]
+    set_rel("dbn:" + series_id.split("/")[0] + "/" + series_id.split("/")[1], series_id.split("/")[0] + " (via DBnomics)",
+            d.get("provider_updated_at") or d.get("updated_at"))
     vals = [None if v == "NA" else v for v in d["value"]]
     return _series(vals, [_period_to_ts(p) for p in d["period"]], series_id)
 
@@ -262,6 +305,16 @@ def weo_all(code, releases):
                 except RuntimeError:
                     pass
             if out:
+                if "weo" not in REL:
+                    try:
+                        dj = _get(f"https://api.db.nomics.world/v22/datasets/IMF/{rel}?format=json", timeout=60, tries=2).json()
+                        doc = (dj.get("datasets", {}).get("docs") or [{}])[0]
+                        lab = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
+                                        str(doc.get("name", "")) + " " + str(doc.get("description", "")))
+                        set_rel("weo", "IMF World Economic Outlook (via DBnomics)", doc.get("updated_at") or doc.get("provider_updated_at"),
+                                label=f"WEO {lab.group(1)} {lab.group(2)}" if lab else rel)
+                    except Exception:
+                        set_rel("weo", "IMF World Economic Outlook (via DBnomics)", None, label=rel)
                 return out, rel
         except Exception:
             continue
@@ -274,7 +327,9 @@ def bis_batch(codes):
     for url in (f"https://stats.bis.org/api/v1/data/WS_CBPOL/M.{key}/all?detail=dataonly&format=csv",
                 f"https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.{key}?format=csv"):
         try:
-            df = pd.read_csv(io.StringIO(_get(url, timeout=90).text), dtype=str)
+            resp = _get(url, timeout=90)
+            set_rel("bis", "BIS", resp.headers.get("Last-Modified"))
+            df = pd.read_csv(io.StringIO(resp.text), dtype=str)
             area = "REF_AREA" if "REF_AREA" in df.columns else next(c for c in df.columns if "AREA" in c.upper())
             tcol = "TIME_PERIOD" if "TIME_PERIOD" in df.columns else df.columns[-2]
             out = {}
@@ -302,13 +357,14 @@ def bis_policy_rate(cc: str) -> pd.Series:
 
 
 # ---------------- World Bank (annual, CC BY 4.0) ----------------
-def worldbank_all(indicator: str, since=2005) -> pd.DataFrame:
+def worldbank_all(indicator: str, since=2003) -> pd.DataFrame:
     """Every country for one indicator (one request). Columns: iso3, year, value."""
     url = (f"https://api.worldbank.org/v2/country/all/indicator/{indicator}"
            f"?format=json&per_page=20000&date={since}:{datetime.utcnow().year}")
     j = _get(url, timeout=150).json()
     if not isinstance(j, list) or len(j) < 2 or j[1] is None:
         raise RuntimeError("no data")
+    set_rel(f"wb:{indicator}", "World Bank", (j[0] or {}).get("lastupdated"))
     rows = [{"iso3": x["countryiso3code"], "year": int(x["date"]), "value": x["value"]}
             for x in j[1] if x.get("value") is not None and x.get("countryiso3code")]
     if not rows:
@@ -349,6 +405,9 @@ def pink_sheet() -> pd.DataFrame:
     for u in urls:
         try:
             raw = pd.read_excel(io.BytesIO(_get(u, timeout=90).content), sheet_name="Monthly Prices", header=None)
+            top = " ".join(str(v) for v in raw.iloc[:8].values.ravel() if str(v) != "nan")
+            m = re.search(r"[Uu]pdated(?: on)?[:\s]+([A-Za-z]+ \d{1,2},? \d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})", top)
+            set_rel("pink", "World Bank Pink Sheet", m.group(1) if m else None)
             hdr = next(i for i in range(15) if raw.iloc[i].astype(str).str.contains("Crude oil", case=False).any())
             cols = [str(c).strip() for c in raw.iloc[hdr]]
             df = raw.iloc[hdr + 1:].copy()
@@ -374,12 +433,13 @@ def ecb_fx(currencies: list, start: str) -> pd.DataFrame:
     out = df.pivot_table(index="TIME_PERIOD", columns="CURRENCY", values="OBS_VALUE").sort_index()
     if out.empty:
         raise RuntimeError("empty")
+    set_rel("ecb", "ECB", out.index[-1], basis="daily")
     return out
 
 
 # ---------------- US Treasury (daily yield curves, public domain) ----------------
 def treasury_curve(kind="daily_treasury_yield_curve", years=None) -> pd.DataFrame:
-    years = years or [datetime.utcnow().year - 1, datetime.utcnow().year]
+    years = years or list(range(datetime.utcnow().year - 21, datetime.utcnow().year + 1))
     frames = []
     for y in years:
         url = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
@@ -392,18 +452,51 @@ def treasury_curve(kind="daily_treasury_yield_curve", years=None) -> pd.DataFram
         raise RuntimeError("treasury unavailable")
     df = pd.concat(frames)
     df["Date"] = pd.to_datetime(df["Date"])
-    return df.set_index("Date").sort_index().apply(pd.to_numeric, errors="coerce")
+    df = df.set_index("Date").sort_index().apply(pd.to_numeric, errors="coerce")
+    set_rel("treasury", "US Treasury", df.index[-1], basis="daily")
+    return df
 
 
 def treasury_debt() -> pd.Series:
     url = ("https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny"
-           "?fields=record_date,tot_pub_debt_out_amt&sort=-record_date&page[size]=800")
-    d = _get(url).json()["data"]
+           "?fields=record_date,tot_pub_debt_out_amt&sort=-record_date&page[size]=6000")
+    d = _get(url, timeout=90).json()["data"]
+    set_rel("fiscaldata", "US Treasury Fiscal Data", d[0]["record_date"] if d else None, basis="daily")
     return _series([x["tot_pub_debt_out_amt"] for x in d], [x["record_date"] for x in d], "US debt")
 
 
+def us_fiscal_years():
+    """US federal receipts, outlays and surplus/deficit by fiscal year (Oct-Sep) from the Monthly Treasury Statement,
+    Table 1 'Year-to-Date' lines (full year in each September statement; year to date in the latest statement)."""
+    base = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/mts/mts_table_1"
+    flds = "record_date,record_fiscal_year,record_calendar_month,classification_desc,print_order_nbr," \
+           "current_month_gross_rcpt_amt,current_month_gross_outly_amt,current_month_dfct_sur_amt"
+    r = _get(f"{base}?fields={flds}&filter=classification_desc:eq:Year-to-Date&sort=-record_date&page[size]=1000", timeout=90)
+    set_rel("mts", "US Treasury, Monthly Treasury Statement", r.headers.get("Last-Modified"))
+    df = pd.DataFrame(r.json().get("data", []))
+    if df.empty:
+        raise RuntimeError("no MTS rows")
+    for c in ("current_month_gross_rcpt_amt", "current_month_gross_outly_amt", "print_order_nbr"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["record_date"] = pd.to_datetime(df["record_date"])
+    # each statement prints the prior year's block first; the current fiscal year's Year-to-Date line is printed last
+    cur = df.sort_values("print_order_nbr").groupby("record_date").tail(1)
+    rows = []
+    for _, x in cur.sort_values("record_date").iterrows():
+        rows.append({"fy": int(x["record_fiscal_year"]), "through": x["record_date"],
+                     "receipts": float(x["current_month_gross_rcpt_amt"]), "outlays": float(x["current_month_gross_outly_amt"])})
+    return pd.DataFrame(rows)
+
+
 def nyfed_effr() -> pd.Series:
-    d = _get("https://markets.newyorkfed.org/api/rates/unsecured/effr/last/500.json").json()["refRates"]
+    end = datetime.utcnow().strftime("%Y-%m-%d")
+    try:
+        d = _get(f"https://markets.newyorkfed.org/api/rates/unsecured/effr/search.json?startDate=2000-01-01&endDate={end}",
+                 timeout=90).json()["refRates"]
+    except Exception:
+        d = _get("https://markets.newyorkfed.org/api/rates/unsecured/effr/last/500.json").json()["refRates"]
+    if d:
+        set_rel("nyfed", "Federal Reserve Bank of New York", max(x["effectiveDate"] for x in d), basis="daily")
     return _series([x["percentRate"] for x in d], [x["effectiveDate"] for x in d], "EFFR")
 
 
@@ -437,6 +530,15 @@ def _dated(rows):
 
 def portwatch_ports():
     return pd.DataFrame(_arcgis("PortWatch_ports_database", "1=1", order="vessel_count_total DESC"))
+
+
+def portwatch_release(service, key):
+    try:
+        j = _get(f"{ARC}/{service}/FeatureServer/0?f=json", timeout=60, tries=2).json()
+        ei = j.get("editingInfo") or {}
+        set_rel(key, "IMF PortWatch", ei.get("dataLastEditDate") or ei.get("lastEditDate"))
+    except Exception:
+        set_rel(key, "IMF PortWatch", None)
 
 
 def portwatch_port_daily(pid, start):
@@ -487,7 +589,9 @@ def ember_monthly() -> pd.DataFrame:
     last = None
     for u in EMBER_URLS:
         try:
-            df = pd.read_csv(io.BytesIO(_get(u, timeout=180).content), low_memory=False)
+            resp = _get(u, timeout=180)
+            df = pd.read_csv(io.BytesIO(resp.content), low_memory=False)
+            set_rel("ember", "Ember", resp.headers.get("Last-Modified"))
             cols = {str(c).lower().strip(): c for c in df.columns}
             date = _col(cols, "date", "month", exclude=("change",))
             src = _col(cols, "electricity source", "variable", "source", exclude=("aggregat",))
@@ -552,6 +656,7 @@ def eurostat_jsonstat(dataset, dims, since):
     """Eurostat's own dissemination API (JSON-stat 2.0), always current. Returns {iso3: series}."""
     q = "&".join(f"{k}={v[0]}" for k, v in dims.items()) + f"&sinceTimePeriod={since}&lang=EN"
     js = _get(f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset}?{q}", timeout=120).json()
+    set_rel(f"eurostat:{dataset}", "Eurostat", js.get("updated"))
     ids, size, vals = js["id"], js["size"], js.get("value", {})
     idx = {d: js["dimension"][d]["category"]["index"] for d in ids}
     pos = {d: {i: c for c, i in idx[d].items()} if isinstance(idx[d], dict) else dict(enumerate(idx[d])) for d in ids}
@@ -578,7 +683,7 @@ def eurostat_jsonstat(dataset, dims, since):
     return res
 
 
-def eurostat_by_country(dataset, dims, since="2014-01"):
+def eurostat_by_country(dataset, dims, since="2003-01"):
     """{iso3: series}: Eurostat API first (current), DBnomics mirror as fallback."""
     try:
         return eurostat_jsonstat(dataset, dims, since)
@@ -602,11 +707,17 @@ def eu_air_freight():
 
 def eu_rail_freight():
     """Quarterly goods transported by rail, thousand tonnes (Eurostat rail_go_quartal)."""
-    return eurostat_by_country("rail_go_quartal", {"freq": ["Q"], "unit": ["THS_T"]}, since="2012-Q1")
+    return eurostat_by_country("rail_go_quartal", {"freq": ["Q"], "unit": ["THS_T"]}, since="2003-Q1")
 
 
 def canada_rail():
     """Monthly railway carloadings, total tonnes, Canada (Statistics Canada table 23-10-0216-01, open licence)."""
+    try:
+        cm = S.post("https://www150.statcan.gc.ca/t1/wds/rest/getCubeMetadata", json=[{"productId": 23100216}], timeout=60).json()
+        obj = (cm[0] if isinstance(cm, list) and cm else {}).get("object", {})
+        set_rel("statcan", "Statistics Canada", obj.get("releaseTime"))
+    except Exception:
+        set_rel("statcan", "Statistics Canada", None)
     meta = _get("https://www150.statcan.gc.ca/t1/wds/rest/getFullTableDownloadCSV/23100216/en", timeout=60).json()
     url = meta.get("object") if isinstance(meta, dict) else None
     if not url:
@@ -641,6 +752,11 @@ def canada_rail():
 
 # ---------------- US Bureau of Transportation Statistics (public domain) ----------------
 def bts_monthly() -> pd.DataFrame:
+    try:
+        meta = _get("https://data.bts.gov/api/views/crem-w557.json", timeout=60, tries=2).json()
+        set_rel("bts", "US Bureau of Transportation Statistics", meta.get("rowsUpdatedAt") or meta.get("dataUpdatedAt"))
+    except Exception:
+        set_rel("bts", "US Bureau of Transportation Statistics", None)
     url = "https://data.bts.gov/resource/crem-w557.json?$order=date%20DESC&$limit=400"
     rows = _get(url, timeout=90).json()
     df = pd.DataFrame(rows)

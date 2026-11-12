@@ -15,9 +15,10 @@
 <header class="bar">
   <div class="brand"><span class="dot"></span>WORLD ECONOMY <b>LIVE</b></div>
   <nav>
-    <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Debt</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#method">Method</a>
+    <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Debt</a><a href="#years">Years</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#method">Method</a>
   </nav>
   <div class="upd mono" id="upd">—</div>
+  <div class="perbar"><span class="mono plab">CHANGE OVER</span><div id="period" class="seg" role="group" aria-label="Comparison period"></div><span class="mono pnote" id="perlabel"></span></div>
 </header>
 
 <section class="hero" id="map">
@@ -37,100 +38,140 @@
   <div class="tip mono" id="tip"></div>
 </section>
 
+<div class="mapfoot" id="f-map"></div>
 <div class="ticker mono"><div class="track" id="ticker"></div></div>
 
 <main>
   <section id="changes">
     <h2><span>01</span>What changed</h2>
     <ul class="drivers" id="drivers"></ul>
+    <div id="f-changes"></div>
   </section>
 
   <section id="economies">
     <h2><span>02</span>Economies</h2>
-    <p class="sub">Vital-signs score, 0–100. 50 is normal for that country. Tap one for the full readout.</p>
+    <p class="sub">Vital-signs score, 0–100. 50 is normal for that country. The small figure under each score is its change over the selected period. Tap one for the full readout.</p>
     <div class="filters"><button data-f="g20" class="on">G20</button><button data-f="all">All tracked</button><input id="q" placeholder="Search country" autocomplete="off"></div>
     <div class="grid" id="econ"></div>
+    <div id="f-econ"></div>
     <div id="detail"></div>
   </section>
 
   <section id="scorecard">
     <h2><span>03</span>Macro scorecard</h2>
-    <p class="sub">The headline numbers and the classic formulas, side by side. Tap a country to chart any column over the last 10 years.</p>
+    <p class="sub">The headline numbers and the classic formulas, side by side, each with its change over the selected period. Tap a country to chart any column over the last 10 years.</p>
     <div class="tbl" id="scoretbl"></div>
+    <div id="f-scorecard"></div>
     <div id="schart"></div>
   </section>
 
   <section id="fundamentals">
     <h2><span>04</span>Debt, deficits and balances</h2>
-    <p class="sub">Annual. IMF World Economic Outlook (current-year estimates marked *) and World Bank.</p>
+    <p class="sub">Annual. IMF World Economic Outlook (current-year estimates marked *) and World Bank. Changes are shown for 1Y and longer.</p>
     <div class="tbl" id="fund"></div>
+    <div id="f-fund"></div>
     <h3>What each economy is made of</h3>
     <p class="sub">GDP = consumption + investment + government + net exports, as % of GDP.</p>
     <div class="legend-row mono"><i style="background:var(--c1)"></i>C <i style="background:var(--c2)"></i>I <i style="background:var(--c3)"></i>G <i style="background:var(--c4)"></i>X − M</div>
     <div id="comp"></div>
+    <div id="f-comp"></div>
     <h3>Debt math</h3>
     <p class="sub">Is each government's debt ratio on track to rise or fall? From bond yields, growth and inflation.</p>
     <div class="tbl" id="debtmath"></div>
+    <div id="f-debtmath"></div>
+  </section>
+
+  <section id="years">
+    <h2><span>05</span>Year by year</h2>
+    <p class="sub">Look up any calendar year (January to December) for every country: growth, inflation, jobs, public finances, trade and people. IMF World Economic Outlook and World Bank, as published.</p>
+    <div class="filters yfil"><label class="mono small" for="ysel">YEAR</label><select id="ysel"></select><button data-y="g20" class="on">G20</button><button data-y="all">All countries</button><input id="yq" placeholder="Search country" autocomplete="off"></div>
+    <div class="tbl" id="ytbl"><p class="sub" style="padding:14px">Loading…</p></div>
+    <div id="f-years"></div>
   </section>
 
   <section id="trade">
-    <h2><span>05</span>Global trade</h2>
-    <p class="sub" id="tradesub">Cargo through each region's busiest ports vs the same days a year ago.</p>
+    <h2><span>06</span>Global trade</h2>
+    <p class="sub" id="tradesub">Cargo through each region's busiest ports.</p>
     <div class="tbl" id="heat"></div>
+    <div id="f-heat"></div>
     <h3>Merchandise trade in dollars</h3>
     <p class="sub" id="tusdsub">Monthly goods exports and imports in US$ (OECD international merchandise trade).</p>
     <div class="tbl" id="tradeusd"></div>
+    <div id="f-tradeusd"></div>
     <h3>Port cargo: imports vs exports by region</h3>
     <div class="bars" id="impexp"></div>
+    <div id="f-impexp"></div>
     <h3>Shipping chokepoints</h3>
-    <p class="sub">Ships through the world's key straits and canals vs a year ago.</p>
+    <p class="sub">Ships through the world's key straits and canals: the latest 28 days vs the same 28 days 1 or more years earlier (seasonal data, so 1Y and longer).</p>
     <div class="bars" id="choke"></div>
+    <div id="f-choke"></div>
   </section>
 
   <section id="energy">
-    <h2><span>06</span>Energy and transport</h2>
+    <h2><span>07</span>Energy and transport</h2>
     <h3>Electricity demand</h3>
-    <p class="sub">Power use is one of the fastest real-time signals of economic activity. Last 3 months vs the same 3 months a year ago. Ember, 88 countries.</p>
+    <p class="sub">Power use is one of the fastest real-time signals of economic activity. Latest month's demand. The change compares the latest 3 months with the same 3 months 1 or more years earlier (seasonal data, so 1Y and longer). The trend line is 3-month demand vs a year earlier. Ember.</p>
     <div class="tbl" id="power"></div>
+    <div id="f-power"></div>
     <h3>Rail and air freight</h3>
-    <p class="sub">Goods moved by rail and air, vs a year ago. United States: Bureau of Transportation Statistics (monthly). Europe: Eurostat air freight (monthly, last 3 months) and rail freight (quarterly). Canada: Statistics Canada railway carloadings (monthly). Freight growth feeds each country's output pillar alongside electricity demand. Global air cargo (IATA) is paid data and isn't included.</p>
+    <p class="sub">Goods moved by rail and air. Changes compare the same months 1 or more years earlier (seasonal data, so 1Y and longer). United States: Bureau of Transportation Statistics (monthly). Europe: Eurostat air freight (monthly, last 3 months) and rail freight (quarterly). Canada: Statistics Canada railway carloadings (monthly). Freight growth feeds each country's output pillar alongside electricity demand. Global air cargo (IATA) is paid data and isn't included.</p>
     <div class="tbl" id="transport"></div>
+    <div id="f-transport"></div>
   </section>
 
   <section id="commodities">
-    <h2><span>07</span>Commodities</h2>
-    <p class="sub">Price change vs a year ago. Monthly, World Bank Pink Sheet.</p>
+    <h2><span>08</span>Commodities</h2>
+    <p class="sub">Monthly prices, World Bank Pink Sheet, with the change over the selected period.</p>
     <div id="prices"></div>
+    <div id="f-prices"></div>
     <h3>Sea cargo by ship type</h3>
-    <p class="sub">Tonnes handled at the world's busiest ports (IMF PortWatch sample), last 4 weeks vs the same weeks a year ago. Ship type, not individual commodity: a tanker figure covers crude, fuel, gas and chemicals together.</p>
+    <p class="sub">Tonnes handled at the world's busiest ports (IMF PortWatch sample), the latest 28 days vs the same 28 days 1 or more years earlier (seasonal data, so 1Y and longer). Ship type, not individual commodity: a tanker figure covers crude, fuel, gas and chemicals together.</p>
     <div class="bars" id="shiptypes"></div>
+    <div id="f-ship"></div>
   </section>
 
   <section id="markets">
-    <h2><span>08</span>Markets</h2>
+    <h2><span>09</span>Markets</h2>
     <h3>Global interest rates</h3>
     <p class="sub">Central bank policy rates (BIS) and 10-year government bond yields (OECD). Real rate = policy rate − inflation (* = latest annual inflation, used where monthly CPI is unavailable). Curve = 10-year − policy.</p>
     <div class="tbl" id="grates"></div>
+    <div id="f-grates"></div>
     <h3>Currencies (spot)</h3>
     <p class="sub" id="fxnote"></p>
     <div class="tbl" id="fx"></div>
+    <div id="f-fx"></div>
     <h3>US Treasury curve</h3>
+    <p class="sub" id="ycsub">Today's yield curve with the curve at the start of the selected period overlaid.</p>
+    <div id="ycurve" class="hchart"></div>
     <div class="tbl" id="rates"></div>
+    <div id="f-rates"></div>
     <div id="usfiscal"></div>
+    <h3>US federal budget by fiscal year</h3>
+    <p class="sub">The US government's fiscal year runs October to September (FY2026 = October 2025 to September 2026). Receipts, outlays and the surplus or deficit from the Monthly Treasury Statement; debt at fiscal year end from Debt to the Penny.</p>
+    <div class="tbl" id="usfy"></div>
+    <div id="f-usfy"></div>
   </section>
 
   <section id="people">
-    <h2><span>09</span>People and health</h2>
-    <p class="sub">The slow-moving foundations. World Bank, latest year.</p>
+    <h2><span>10</span>People and health</h2>
+    <p class="sub">The slow-moving foundations. World Bank, latest year, with the change over the selected period (annual data: 1Y and longer).</p>
     <div class="tbl" id="vitals"></div>
+    <div id="f-vitals"></div>
   </section>
 
   <section id="method">
-    <h2><span>10</span>Method</h2>
+    <h2><span>11</span>Method</h2>
     <details open><summary>The score</summary>
       <p>Up to four pillars per economy: <b>output</b> (factory output growth, or GDP growth, blended with electricity demand), <b>jobs</b> (12-month change in unemployment, inverted), <b>prices</b> (distance of inflation from 2%, inverted) and <b>trade</b> (port cargo vs a year ago). Each is compared with that country's own last 10 years using the median and median absolute deviation, leaving out the pandemic distortion (March 2020 to December 2021). An economy needs at least two pillars to be scored. Countries without monthly data are scored the same way from IMF World Economic Outlook estimates for the current year (growth, inflation, change in unemployment) against their own past 15 years, plus port cargo and electricity where available; their map tooltip says so.</p>
       <p>The <b>world score</b> is 80% the GDP-weighted average of economy scores and 20% <b>global stress</b>: oil and gas price shocks against their own 15-year history, and world port cargo vs a year ago.</p>
       <p class="mono small">60+ STRONG · 45–60 STEADY · 35–45 SOFT · &lt;35 STRESSED</p>
+    </details>
+    <details><summary>How changes are shown</summary>
+      <p>The <b>Change over</b> toggle at the top sets one comparison period for every panel: 1M, 3M, 6M, 1Y, 3Y, 5Y, 10Y, 15Y or 20Y (default 1Y). Each value is shown with its change over that period.</p>
+      <p><b>Scores</b>: points. <b>Interest rates and bond yields</b> (and spreads between them): basis points. <b>Series already in percent</b> (inflation, unemployment, growth, shares of GDP): percentage points. <b>Levels</b> (prices, exchange rates, trade values, cargo, electricity, freight): percent change; for 3Y and longer this is the compound annual rate, labelled "per year". Trade balances can switch sign, so their change is shown in dollars.</p>
+      <p>For <b>5Y and longer</b>, monthly and weekly series compare the latest 12-month average with the 12-month average the same number of years earlier. Quarterly series compare quarter with quarter, annual series year with year, and daily market series day with day.</p>
+      <p><b>Seasonal series</b> that are not seasonally adjusted (port cargo, imports vs exports by region, chokepoints, sea cargo by ship type, electricity demand, rail and air freight) keep a like-for-like window: the latest 28 days, month, 3 months or quarter vs the same window 1, 3, 5, 10, 15 or 20 years earlier. They show changes for 1Y and longer only. Annual sections (debt, deficits and balances; people and health) also start at 1Y. What changed, the map colors and the ticker do not follow the toggle; the map tooltip does.</p>
+      <p>A change shows <b>n/a</b> when the series is too infrequent for the period (1M on quarterly data; 1M–6M on annual data), when the period reaches back before the series begins (the note under the panel gives the start date), or when the source has no observation at the comparison point. Nothing is estimated or filled in. The note under each panel gives the latest data period, the date the source published it (from the source's own metadata) and the source.</p>
     </details>
     <details><summary>The formulas</summary><div id="formulas"></div></details>
     <details><summary>Sources, licences and status</summary>

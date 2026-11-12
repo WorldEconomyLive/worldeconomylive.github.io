@@ -14,7 +14,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 import registry as R  # noqa: E402
-import sources as S  # noqa: E402
+import sources as S
+import changes as C  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "site" / "data" / "heartbeat.json"
@@ -128,18 +129,20 @@ def fallback_series(cand, iso3):
     kind = cand[0]
     if kind == "dbn":
         _, sid, tf = cand
-        return transform(S.dbnomics(sid), tf, {}), "Eurostat", False
+        return transform(S.dbnomics(sid), tf, {}), "Eurostat", False, "dbn:" + "/".join(sid.split("/")[:2])
     if kind == "wb":
         _, ind, tf = cand
         d = wb_all(ind)
         d = d[d.iso3 == iso3].sort_values("year")
-        return S._series(d["value"], d["year"].astype(str) + "-07-01", ind), "World Bank (annual)", True
+        return S._series(d["value"], d["year"].astype(str) + "-07-01", ind), "World Bank (annual)", True, f"wb:{ind}"
     raise RuntimeError(kind)
 
 
 def macro_block():
     areas = list(R.ECONOMIES)
     batch = {}
+    for flow in {sp["flow"] for sp in R.OECD_SPECS.values()}:
+        S.oecd_release(flow, "oecd:" + flow.split(",")[1])
     for ind, spec in R.OECD_SPECS.items():
         try:
             got = S.oecd_batch(spec, areas)
@@ -166,35 +169,37 @@ def macro_block():
         e = {"name": name, "iso3": iso3, "g20": iso3 in R.G20, "indicators": {}, "pillars": {}}
         series, fb = {}, R.fallbacks(iso3)
         for ind in ["gdp", "inflation", "unemployment", "industry", "long_rate", "short_rate", "exports_usd", "imports_usd"]:
-            best = None   # (series, label, annual)
+            best = None   # (series, label, annual, release key)
             s = batch.get(ind, {}).get(iso3)
             if s is not None and age_months(s) <= R.MAX_STALE_MONTHS:
-                best = (s, "OECD", False)
+                best = (s, "OECD", False, "oecd:" + R.OECD_SPECS[ind]["flow"].split(",")[1])
             if best is None or age_months(best[0]) > R.FRESH_MONTHS:
                 for cand in fb.get(ind, []):
                     try:
-                        s2, lab, annual = fallback_series(cand, iso3)
+                        s2, lab, annual, rk = fallback_series(cand, iso3)
                         lim = 30 if annual else R.MAX_STALE_MONTHS
                         if len(s2) < 3 or age_months(s2) > lim:
                             continue
                         if best is None or (not annual and age_months(s2) < age_months(best[0])):
-                            best = (s2, lab, annual)
+                            best = (s2, lab, annual, rk)
                         if not annual and age_months(s2) <= R.FRESH_MONTHS:
                             break
                     except Exception:
                         continue
             if best:
-                s, lab, annual = best
+                s, lab, annual, rk = best
                 series[ind] = None if annual else s
                 q = ind == "gdp"
                 e["indicators"][ind] = {"latest": float(s.iloc[-1]), "date": s.index[-1], "annual": annual,
-                                        "year_ago": value_ago(s, 335), "source": lab,
+                                        "year_ago": value_ago(s, 335), "source": lab, "rel": rk,
+                                        "chg": chg(s, IND_KIND[ind], "A" if annual else None),
                                         "spark": [] if annual else spark(s, 20 if q else 24, "QS" if q else "MS")}
         b = bis.get("XM" if iso3 in R.EURO else iso2)
         if b is not None and age_months(b) <= R.MAX_STALE_MONTHS:
             series["policy_rate"] = b
             e["indicators"]["policy_rate"] = {"latest": float(b.iloc[-1]), "date": b.index[-1], "annual": False,
-                                              "year_ago": value_ago(b, 335), "source": "BIS", "spark": spark(b, 24)}
+                                              "year_ago": value_ago(b, 335), "source": "BIS", "rel": "bis",
+                                              "chg": chg(b, "bp"), "spark": spark(b, 24)}
         elif "short_rate" in e["indicators"]:
             e["indicators"]["policy_rate"] = dict(e["indicators"]["short_rate"], source="OECD (3-month rate)")
             series["policy_rate"] = series.get("short_rate")
@@ -203,9 +208,17 @@ def macro_block():
         if X is not None and Mi is not None:
             bal = (X - Mi).dropna()
             if len(bal):
+                rk = e["indicators"]["exports_usd"].get("rel")
                 e["indicators"]["trade_balance_usd"] = {"latest": float(bal.iloc[-1]), "date": bal.index[-1], "annual": False,
-                                                        "year_ago": value_ago(bal, 335), "source": "OECD", "spark": spark(bal, 24)}
+                                                        "year_ago": value_ago(bal, 335), "source": "OECD", "rel": rk,
+                                                        "chg": chg(bal, "abs"), "spark": spark(bal, 24)}
+                Xm, Mm = X.resample("MS").sum(min_count=1).dropna(), Mi.resample("MS").sum(min_count=1).dropna()
+                X12, M12 = Xm.rolling(12).sum().dropna(), Mm.rolling(12).sum().dropna()
+                B12 = (X12 - M12).dropna()
                 e["trade_m"] = {"exports": float(X.iloc[-1]), "imports": float(Mi.iloc[-1]), "balance": float(bal.iloc[-1]),
+                                "rel": rk, "c": {"exports": chg(X, "pct"), "imports": chg(Mi, "pct"), "balance": chg(bal, "abs"),
+                                                 "exports_12m": chg(X12, "pct"), "imports_12m": chg(M12, "pct"),
+                                                 "balance_12m": chg(B12, "abs")},
                                 "exports_yoy": pct(float(X.iloc[-1]), value_ago(X, 335)),
                                 "imports_yoy": pct(float(Mi.iloc[-1]), value_ago(Mi, 335)),
                                 "exports_12m": float(X.iloc[-12:].sum()) if len(X) >= 12 else None,
@@ -226,8 +239,8 @@ def macro_block():
     return out
 
 
-def history_series(e, months=120):
-    """Monthly history (last 10 years) of every scorecard column, for the click-to-chart view."""
+def history_series(e, months=120, full=False):
+    """Monthly history of every scorecard column (last 10 years for the chart; full=True for change calculations)."""
     S_ = e.get("_series", {})
     m = lambda k: None if S_.get(k) is None else S_[k].resample("MS").mean()  # noqa: E731
     pi, u, i, lr, X, M = (m(k) for k in ("inflation", "unemployment", "policy_rate", "long_rate", "exports_usd", "imports_usd"))
@@ -251,6 +264,7 @@ def history_series(e, months=120):
         gap = -2.0 * (uu - ubar)
         p_ = pi.reindex(gap.index).ffill()
         taylor = 0.5 + p_ + 0.5 * (p_ - 2.0) + 0.5 * gap
+        out["taylor"], out["output_gap"] = taylor, gap
         if i is not None:
             out["taylor_gap"] = (i.reindex(taylor.index).ffill() - taylor)
         a3 = uu.rolling(3).mean()
@@ -259,13 +273,47 @@ def history_series(e, months=120):
         b = (X - M).dropna()
         out["trade_balance"] = b
         out["trade_balance_12m"] = b.rolling(12).sum()
+    if full:
+        return {k: v.dropna() for k, v in out.items()}
     res = {}
     for k, v in out.items():
+        if k in ("taylor", "output_gap"):
+            continue
         v = v.dropna()
         v = v[v.index >= v.index.max() - pd.DateOffset(months=months)] if len(v) else v
         if len(v) >= 3:
             res[k] = [[d.strftime("%Y-%m"), round(float(x), 3)] for d, x in v.items()]
     return res
+
+
+def derived_series(e):
+    """History of the debt-math and balance figures, so they carry changes like everything else."""
+    S_, H = e.get("_series", {}), ANNUAL_HIST.get(e["iso3"], {})
+    out = {}
+    pi = None if S_.get("inflation") is None else S_["inflation"].resample("MS").mean()
+    lr = None if S_.get("long_rate") is None else S_["long_rate"].resample("MS").mean()
+    g = S_.get("gdp")
+    if g is not None and pi is not None:
+        gm = g.resample("MS").mean().reindex(pi.index).ffill(limit=5)
+        out["nominal_growth"] = (gm + pi).dropna()
+        if lr is not None:
+            out["r_minus_g"] = (lr - out["nominal_growth"]).dropna()
+
+            def by_year(a):
+                return pd.Series([a.get(pd.Timestamp(f"{d.year}-07-01")) for d in out["r_minus_g"].index],
+                                 index=out["r_minus_g"].index, dtype=float)
+            if "gov_debt" in H:
+                d_m = by_year(H["gov_debt"])
+                out["pb_stabilizing"] = (out["r_minus_g"] / (100 + out["nominal_growth"].reindex(d_m.index)) * d_m).dropna()
+                if "primary_balance" in H:
+                    out["fiscal_gap"] = (by_year(H["primary_balance"]) - out["pb_stabilizing"]).dropna()
+    if "savings" in H and ("investment_weo" in H or "investment" in H):
+        out["s_minus_i"] = (H["savings"] - H.get("investment_weo", H.get("investment"))).dropna()
+    if "current_account" in H and "gov_balance" in H:
+        out["twin"] = (H["current_account"] + H["gov_balance"]).dropna()
+    if "exports_usd_a" in H and "imports_usd_a" in H:
+        out["trade_balance_usd"] = (H["exports_usd_a"] - H["imports_usd_a"]).dropna()
+    return out
 
 
 def macro_math(e):
@@ -303,8 +351,34 @@ def real_rate_any(e):
 
 
 # ---------------------------------------------------------------- annual (all countries)
-SERIES_OUT: dict = {}    # iso3 -> {column: [[YYYY-MM, value], ...]} written to site/data/series.json
-ANNUAL_HIST: dict = {}   # iso3 -> {gdp_growth|inflation_a|unemployment_a: annual series}
+SERIES_OUT: dict = {}
+TRADE_SER: dict = {}     # iso3 -> (monthly exports, monthly imports) for the all-economies total row    # iso3 -> {column: [[YYYY-MM, value], ...]} written to site/data/series.json
+ANNUAL_HIST: dict = {}
+IND_KIND = {"gdp": "pp", "inflation": "pp", "unemployment": "pp", "industry": "pp", "long_rate": "bp", "short_rate": "bp",
+            "policy_rate": "bp", "exports_usd": "pct", "imports_usd": "pct", "trade_balance_usd": "abs"}
+ANNUAL_KIND = {"gdp_growth": "pp", "inflation_a": "pp", "unemployment_a": "pp", "gdp_usd": "pct", "gov_debt": "pp",
+               "gov_balance": "pp", "primary_balance": "pp", "revenue": "pp", "spending": "pp", "current_account": "pp",
+               "savings": "pp", "investment_weo": "pp", "population": "pct", "pop_growth": "pp", "age65": "pp",
+               "fertility": "pct", "life_exp": "pct", "health_spend": "pp", "net_migration": "abs", "gdp_pc": "pct",
+               "gini": "pts", "urban": "pp", "exports_usd_a": "pct", "imports_usd_a": "pct", "net_exports": "pp",
+               "consumption": "pp", "investment": "pp", "gov_consumption": "pp", "reserves_usd": "pct",
+               "reserves_months": "pct", "private_credit": "pp", "debt_wb": "pp"}
+MATH_KIND = {"real_rate": "bp", "misery": "pp", "curve": "bp", "taylor_gap": "bp", "taylor": "bp", "sahm": "pp",
+             "output_gap": "pp", "nominal_growth": "pp", "r_minus_g": "pp", "pb_stabilizing": "pp", "fiscal_gap": "pp",
+             "s_minus_i": "pp", "twin": "pp", "trade_balance_usd": "abs"}
+
+
+def chg(s, kind, freq=None):
+    o = C.change(s, kind, freq)
+    o["a"] = "".join(str(x) for x in o["a"])
+    return o
+
+
+def schg(s, window):
+    """Seasonal (not seasonally adjusted) series: same window vs the same window N years earlier; 1Y+ only."""
+    o = C.seasonal_change(s, window)
+    o["a"] = "".join(str(x) for x in o["a"])
+    return o   # iso3 -> {gdp_growth|inflation_a|unemployment_a: annual series}
 
 
 def z_annual(s, years=15, min_n=8):
@@ -365,12 +439,12 @@ def annual_block():
             data, rel = weo[key].result()
             rel_used = rel
             for iso3, s in data.items():
-                s = s[s.index.year <= TODAY.year] * scale
-                if key in ("gdp_growth", "inflation_a", "unemployment_a"):
-                    ANNUAL_HIST.setdefault(iso3, {})[key] = s.dropna()
+                s = (s[s.index.year <= TODAY.year] * scale).dropna()
+                ANNUAL_HIST.setdefault(iso3, {})[key] = s
                 if len(s):
                     allc.setdefault(iso3, {})[key] = {"label": label, "unit": unit, "value": float(s.iloc[-1]),
-                                                      "year": int(s.index[-1].year), "source": "IMF WEO",
+                                                      "year": int(s.index[-1].year), "source": "IMF WEO", "rel": "weo",
+                                                      "chg": chg(s, ANNUAL_KIND.get(key, "pp"), "A"),
                                                       "estimate": bool(s.index[-1].year >= TODAY.year - 0)}
             S.log(f"weo.{key}", True, f"{len(data)} countries")
         except Exception as e:
@@ -382,8 +456,11 @@ def annual_block():
                 g = g.sort_values("year")
                 last = g.iloc[-1]
                 ten = g[g["year"] <= last["year"] - 10]
+                ser = C.annual_series(zip(g["year"], g["value"]))
+                ANNUAL_HIST.setdefault(iso3, {})[key] = ser
                 allc.setdefault(iso3, {})[key] = {"label": label, "unit": unit, "value": float(last["value"]),
                                                   "year": int(last["year"]), "source": "World Bank", "estimate": False,
+                                                  "rel": f"wb:{ind}", "chg": chg(ser, ANNUAL_KIND.get(key, "pct"), "A"),
                                                   "ten_years_ago": float(ten.iloc[-1]["value"]) if len(ten) else None}
             S.log(f"worldbank.{ind}", True, f"{df.iso3.nunique()} countries")
         except Exception as e:
@@ -392,6 +469,8 @@ def annual_block():
     for iso3, d in allc.items():
         if "gov_debt" not in d and "debt_wb" in d:
             d["gov_debt"] = dict(d["debt_wb"], label="Government debt")
+            if "debt_wb" in ANNUAL_HIST.get(iso3, {}):
+                ANNUAL_HIST[iso3]["gov_debt"] = ANNUAL_HIST[iso3]["debt_wb"]
     return allc, rel_used
 
 
@@ -437,16 +516,16 @@ def prices_block():
         if len(s) < 13:
             continue
         rows.append({"name": name, "ship": ship, "level": float(s.iloc[-1]), "date": s.index[-1],
-                     "unit": unit, "m1": pct(float(s.iloc[-1]), float(s.iloc[-2])),
+                     "unit": unit, "m1": pct(float(s.iloc[-1]), float(s.iloc[-2])), "chg": chg(s, "pct"), "rel": "pink",
                      "yoy": pct(float(s.iloc[-1]), value_ago(s, 360)), "spark": spark(s, 24)})
     return rows
 
 
 def markets_block():
     out = {"fx": [], "rates": [], "us_fiscal": [], "global_rates": [], "fx_note": "ECB euro foreign exchange reference rates (spot, set daily around 14:15 CET), converted to US-dollar pairs through the euro: USD/XXX = (XXX per EUR) ÷ (USD per EUR)."}
-    start = (TODAY - pd.Timedelta(days=430)).strftime("%Y-%m-%d")
+    start = (TODAY - pd.DateOffset(years=22)).strftime("%Y-%m-%d")
     try:
-        fx = S.ecb_fx(R.FX, start).ffill()
+        fx = S.ecb_fx(R.FX, start)
         S.log("ecb.fx", True)
         usd = fx["USD"]                                     # USD per 1 EUR
         series = {}
@@ -461,27 +540,29 @@ def markets_block():
                 s_, pair, meaning = fx[c] / usd, f"USD/{c}", f"{R.FX_UNITS.get(c, c)} per 1 US dollar"
             s_ = s_.dropna()
             last = float(s_.iloc[-1])
+            value_usd = s_ if (c in R.FX_BASE_IS_FOREIGN or c == "EUR") else 1 / s_     # US$ per 1 unit of the currency
             # sign so that + always means the foreign currency strengthened vs USD
             strong = 1 if c in R.FX_BASE_IS_FOREIGN or c == "EUR" else -1
             m1, y1 = pct(last, value_ago(s_, 30)), pct(last, value_ago(s_, 365))
             out["fx"].append({"name": R.FX_NAMES.get(c, c), "code": c, "pair": pair, "meaning": meaning,
                               "latest": last, "date": s_.index[-1], "m1": m1, "y1": y1,
-                              "ccy_y1": None if y1 is None else strong * y1,
+                              "ccy_y1": None if y1 is None else strong * y1, "rel": "ecb",
+                              "chg": chg(s_, "pct"), "ccy_chg": chg(value_usd, "pct"),
                               "spark": spark(s_, 13), "unit": "%"})
     except Exception as e:
         S.log("ecb.fx", False, e)
 
-    def rate_row(name, s):
+    def rate_row(name, s, rel):
         s = s.dropna()
         last = float(s.iloc[-1])
         a, b = value_ago(s, 30), value_ago(s, 365)
-        out["rates"].append({"name": name, "latest": last, "date": s.index[-1], "unit": "pp",
+        out["rates"].append({"name": name, "latest": last, "date": s.index[-1], "unit": "pp", "rel": rel, "chg": chg(s, "bp"),
                              "m1": None if a is None else last - a, "y1": None if b is None else last - b,
                              "spark": spark(s, 13)})
     try:
         effr = S.nyfed_effr()
         S.log("nyfed.effr", True)
-        rate_row("Fed funds (effective)", effr)
+        rate_row("Fed funds (effective)", effr, "nyfed")
     except Exception as e:
         S.log("nyfed.effr", False, e)
     try:
@@ -489,15 +570,28 @@ def markets_block():
         S.log("treasury.curve", True)
         for col, nm in (("3 Mo", "3-month T-bill"), ("2 Yr", "2-year Treasury"), ("10 Yr", "10-year Treasury"), ("30 Yr", "30-year Treasury")):
             if col in yc:
-                rate_row(nm, yc[col])
+                rate_row(nm, yc[col], "treasury")
+        mats = [c for c in ("1 Mo", "2 Mo", "3 Mo", "4 Mo", "6 Mo", "1 Yr", "2 Yr", "3 Yr", "5 Yr", "7 Yr", "10 Yr", "20 Yr", "30 Yr") if c in yc]
+        ycd = yc[mats].dropna(how="all")
+        last_d = ycd.index[-1]
+        curve = {"maturities": mats, "today": {"date": last_d, "y": [None if pd.isna(v) else float(v) for v in ycd.iloc[-1]]}, "past": {}}
+        for per, m in C.PERIODS:
+            tgt = last_d - pd.DateOffset(months=m)
+            win = ycd[(ycd.index <= tgt) & (ycd.index >= tgt - pd.Timedelta(days=7))]
+            if len(win):
+                row = win.iloc[-1]
+                curve["past"][per] = {"date": win.index[-1], "y": [None if pd.isna(v) else float(v) for v in row]}
+            else:
+                curve["past"][per] = {"date": None, "y": None, "why": "s" if tgt < ycd.index[0] else "g", "start": ycd.index[0]}
+        out["curve"] = curve
         if "10 Yr" in yc and "2 Yr" in yc:
-            rate_row("Yield curve (10y − 2y)", yc["10 Yr"] - yc["2 Yr"])
+            rate_row("Yield curve (10y − 2y)", yc["10 Yr"] - yc["2 Yr"], "treasury")
         try:
             ry = S.treasury_curve("daily_treasury_real_yield_curve")
             if "10 YR" in ry or "10 Yr" in ry:
                 real10 = ry["10 YR"] if "10 YR" in ry else ry["10 Yr"]
-                rate_row("10-year real yield", real10)
-                rate_row("Inflation expected, next 10 years", (yc["10 Yr"] - real10).dropna())
+                rate_row("10-year real yield", real10, "treasury")
+                rate_row("Inflation expected, next 10 years", (yc["10 Yr"] - real10).dropna(), "treasury")
         except Exception:
             pass
     except Exception as e:
@@ -506,9 +600,29 @@ def markets_block():
         debt = S.treasury_debt()
         S.log("treasury.debt", True)
         last = float(debt.iloc[-1])
+        try:
+            fy = S.us_fiscal_years()
+            S.log("treasury.mts", True, f"{fy.fy.nunique()} fiscal years")
+            fyrows = []
+            for f_, g in fy.groupby("fy"):
+                x = g.sort_values("through").iloc[-1]
+                full = x["through"].month == 9
+                end = pd.Timestamp(f"{f_}-09-30")
+                de = debt[debt.index <= end]
+                ds = debt[debt.index <= pd.Timestamp(f"{f_ - 1}-09-30")]
+                fyrows.append({"fy": int(f_), "complete": bool(full), "through": x["through"],
+                               "receipts": x["receipts"], "outlays": x["outlays"], "balance": x["receipts"] - x["outlays"],
+                               "debt_end": float(de.iloc[-1]) if full and len(de) and de.index[-1] >= end - pd.Timedelta(days=7) else None,
+                               "debt_start": float(ds.iloc[-1]) if len(ds) and ds.index[-1] >= pd.Timestamp(f"{f_ - 1}-09-23") else None})
+            for r_ in fyrows:
+                if r_["debt_end"] is not None and r_["debt_start"] is not None:
+                    r_["debt_change"] = r_["debt_end"] - r_["debt_start"]
+            out["us_fy"] = sorted(fyrows, key=lambda r_: -r_["fy"])[:25]
+        except Exception as e:
+            S.log("treasury.mts", False, e)
         out["us_fiscal"].append({"name": "US federal debt (total)", "latest": last, "date": debt.index[-1],
                                  "y1_abs": None if value_ago(debt, 365) is None else last - value_ago(debt, 365),
-                                 "y1": pct(last, value_ago(debt, 365))})
+                                 "y1": pct(last, value_ago(debt, 365)), "rel": "fiscaldata", "chg": chg(debt, "pct")})
     except Exception as e:
         S.log("treasury.debt", False, e)
     return out
@@ -528,7 +642,8 @@ def ports_block():
     picks = pd.concat([ports.dropna(subset=["region"]).groupby("region").head(R.PORTS_PER_REGION),
                        ports[ports["ISO3"].isin(R.ECONOMIES)].groupby("ISO3").head(R.PORTS_PER_ECONOMY)]
                       ).drop_duplicates("portid")
-    start = (TODAY - pd.Timedelta(days=430)).strftime("%Y-%m-%d")
+    start = "2019-01-01"
+    S.portwatch_release("Daily_Ports_Data", "portwatch")
     from concurrent.futures import ThreadPoolExecutor
 
     def _one(pid):
@@ -591,7 +706,12 @@ def ports_block():
             if d is None or not len(d):
                 continue
             cur, prv = d[(d.date >= a) & (d.date <= end)], d[(d.date >= pa) & (d.date <= pb)]
-            cps.append({"name": cname, "lon": lon, "lat": lat,
+            dd = d.groupby("date")[["n_total"] + [c for c in ("n_tanker", "capacity") if c in d]].sum().asfreq("D")
+            dd = dd[dd.index <= end]
+            cw = C.window_change(dd, end, R.WINDOW_DAYS, start=dd.index.min())
+            for o in cw.values():
+                o["a"] = "".join(str(x) for x in o["a"])
+            cps.append({"name": cname, "lon": lon, "lat": lat, "chg": cw.get("n_total"), "rel": "portwatch",
                         "transits_yoy": pct(float(cur["n_total"].sum()), float(prv["n_total"].sum())),
                         "tanker_yoy": pct(float(cur["n_tanker"].sum()), float(prv["n_tanker"].sum())) if "n_tanker" in d else None,
                         "capacity_yoy": pct(float(cur["capacity"].sum()), float(prv["capacity"].sum())) if "capacity" in d else None,
@@ -602,6 +722,30 @@ def ports_block():
 
     names = picks.set_index("portid")
     portrows = ratio(win(a, end, "portid"), win(pa, pb, "portid")).join(names[["portname", "ISO3", "region"]])
+
+    # Change over every period: 28-day window vs the same window `period` earlier (5Y+: 365-day averages)
+    first = pv["date"].min()
+
+    def daily(key=None, cols_=cols):
+        g = pv[pv.date <= end]
+        if key is None:
+            d = g.groupby("date")[cols_].sum()
+        else:
+            d = g.groupby(["date", key])[cols_].sum().unstack(key)
+        return d.asfreq("D")
+    pc = {"global": C.window_change(daily(), end, R.WINDOW_DAYS, start=first)}
+    reg_d = daily("region")
+    pc["regions"] = {r: C.window_change(reg_d.xs(r, axis=1, level=1), end, R.WINDOW_DAYS, start=first)
+                     for r in reg_d.columns.get_level_values(1).unique()}
+    eco_d = daily("ISO3", ["total"])
+    pc["economies"] = {i: C.window_change(eco_d.xs(i, axis=1, level=1), end, R.WINDOW_DAYS, start=first)["total"]
+                       for i in eco_d.columns.get_level_values(1).unique()}
+    port_d = daily("portid")
+    pc["ports"] = {p: C.window_change(port_d.xs(p, axis=1, level=1), end, R.WINDOW_DAYS, start=first)
+                   for p in port_d.columns.get_level_values(1).unique()}
+    for blk in (pc["global"], *pc["regions"].values(), *pc["economies"].values(), *pc["ports"].values()):
+        for o in (blk.values() if "v" not in blk else [blk]):
+            o["a"] = "".join(str(x) for x in o["a"])
     return {
         "window": [a, end],
         "regions": [{"region": r, **row[cols].to_dict(),
@@ -612,8 +756,10 @@ def ports_block():
         "global": glob.to_dict(),
         "economies": {i: float(v) for i, v in eco["total"].items() if pd.notna(v)},
         "weekly": {"weeks": [d.strftime("%m/%d") for d in wky.index], "series": {c: wky[c].tolist() for c in wky.columns}},
-        "ports": [{"port": row["portname"], "iso3": row["ISO3"], "region": row["region"], **row[cols].to_dict()}
-                  for _, row in portrows.iterrows()],
+        "ports": [{"port": row["portname"], "iso3": row["ISO3"], "region": row["region"], **row[cols].to_dict(),
+                   "c": pc["ports"].get(pid)} for pid, row in portrows.iterrows()],
+        "pc": {"global": pc["global"], "regions": pc["regions"], "economies": pc["economies"]},
+        "rel": "portwatch",
         "chokepoints": cps,
     }
 
@@ -664,8 +810,8 @@ def electricity_block():
         y = ((s3 / s3.shift(12) - 1) * 100).dropna()     # 3-month demand vs same 3 months a year ago
         if not len(y):
             continue
-        out[iso3] = {"twh": float(s.iloc[-1]), "date": s.index[-1], "yoy_3m": float(y.iloc[-1]),
-                     "z": z_last(y, min_n=24), "spark": spark(y, 24)}
+        out[iso3] = {"twh": float(s.iloc[-1]), "date": s.index[-1], "yoy_3m": float(y.iloc[-1]), "rel": "ember",
+                     "chg": schg(s, 3), "z": z_last(y, min_n=24), "spark": spark(y, 24)}
     return out
 
 
@@ -694,7 +840,7 @@ def transport_block():
         if len(s) < 13 or age_months(s) > 10:
             continue
         used.add(col)
-        rows.append({"name": name, "latest": float(s.iloc[-1]), "date": s.index[-1],
+        rows.append({"name": name, "latest": float(s.iloc[-1]), "date": s.index[-1], "rel": "bts", "chg": schg(s, 1),
                      "yoy": pct(float(s.iloc[-1]), value_ago(s, 360)), "spark": spark(s, 24), "field": col})
     S.log("bts.transport", bool(rows), f"{len(rows)} series")
     return rows
@@ -705,7 +851,7 @@ def freight_block():
     Returns {"rows": [...table rows...], "z": {iso3: z of freight volume growth vs own history}}."""
     rows, zs, skipped = [], {}, []
 
-    def add(iso3, mode, s, unit, quarterly=False):
+    def add(iso3, mode, s, unit, quarterly=False, rel=None):
         s = s.dropna().sort_index()
         s = s[~s.index.duplicated()]
         if len(s) < (12 if quarterly else 27) or age_months(s) > (12 if quarterly else 8):
@@ -724,17 +870,17 @@ def freight_block():
         c = pycountry.countries.get(alpha_3=iso3)
         rows.append({"country": c.name if c else iso3, "iso3": iso3, "mode": mode, "latest": float(s.iloc[-1]),
                      "unit": unit, "date": s.index[-1], "yoy": float(y.iloc[-1]), "spark": spark(y, 24 if not quarterly else 12),
-                     "period": "quarter" if quarterly else "3 months"})
+                     "period": "quarter" if quarterly else "3 months", "rel": rel, "chg": schg(s, 1 if quarterly else 3)})
         if z is not None:
             zs.setdefault(iso3, []).append(z)
 
-    for name, fn, mode, unit, q in (("eurostat.air_freight", S.eu_air_freight, "Air freight", "tonnes", False),
-                                    ("eurostat.rail_freight", S.eu_rail_freight, "Rail freight", "thousand tonnes", True)):
+    for name, fn, mode, unit, q, rk in (("eurostat.air_freight", S.eu_air_freight, "Air freight", "tonnes", False, "eurostat:avia_gooc"),
+                                        ("eurostat.rail_freight", S.eu_rail_freight, "Rail freight", "thousand tonnes", True, "eurostat:rail_go_quartal")):
         try:
             data = fn()
             n0 = len(rows)
             for iso3, ser in data.items():
-                add(iso3, mode, ser, unit, q)
+                add(iso3, mode, ser, unit, q, rk)
             kept = len(rows) - n0
             note = f"{kept}/{len(data)} countries current"
             if kept < len(data):
@@ -743,7 +889,7 @@ def freight_block():
         except Exception as ex:
             S.log(name, False, ex)
     try:
-        add("CAN", "Rail carloadings", S.canada_rail(), "tonnes")
+        add("CAN", "Rail carloadings", S.canada_rail(), "tonnes", rel="statcan")
         S.log("statcan.rail", True, "Canada")
     except Exception as ex:
         S.log("statcan.rail", False, ex)
@@ -803,6 +949,93 @@ def drivers(econ, prices, ports):
     return out
 
 
+def drivers_by_period(econ, prices, ports):
+    """'What changed' for every period on the toggle, from the same change objects the tables use."""
+    words = ["past month", "past 3 months", "past 6 months", "past year", "past 3 years", "past 5 years",
+             "past 10 years", "past 15 years", "past 20 years"]
+    out = {}
+    for i, per in enumerate(C.NAMES):
+        yr = i >= 4
+
+        def say(subject, v, lead="is"):
+            return (f"{subject} {lead} {'up' if v > 0 else 'down'} {abs(v):.0f}%"
+                    + (f" a year over the {words[i]} (compound)." if yr else f" over the {words[i]}."))
+        lines = []
+        if ports:
+            cps = [(c["name"], (c.get("chg") or {}).get("v", [None] * 9)[i]) for c in ports["chokepoints"]]
+            for n, v in sorted([x for x in cps if x[1] is not None], key=lambda x: -abs(x[1]))[:2]:
+                if abs(v) >= (5 if yr else 15):
+                    lines.append(say(f"Ship traffic at {n}", v))
+            regs = [(r, o.get("total", {}).get("v", [None] * 9)[i]) for r, o in ports.get("pc", {}).get("regions", {}).items()]
+            for n, v in sorted([x for x in regs if x[1] is not None], key=lambda x: -abs(x[1]))[:2]:
+                lines.append(say(f"{n} port cargo", v))
+        pr = [(p["name"], p["chg"]["v"][i]) for p in prices if p.get("chg") and p["chg"]["v"][i] is not None]
+        for n, v in sorted(pr, key=lambda x: -abs(x[1]))[:3]:
+            lines.append(say(n, v))
+        out[per] = lines
+    return out
+
+
+def coverage_report(data):
+    """n/a matrix for every change object on the site, grouped by source: {group: {period: {code: count}}}."""
+    rep = {}
+
+    def walk(x, rel=None, where=""):
+        if isinstance(x, dict):
+            if "v" in x and "r" in x and "k" in x and isinstance(x.get("r"), str):
+                g = rep.setdefault(f"{rel or where}", {p: {} for p in C.NAMES})
+                for p, code in zip(C.NAMES, x["r"]):
+                    g[p][code] = g[p].get(code, 0) + 1
+                return
+            r = x.get("rel") if isinstance(x.get("rel"), str) else rel
+            for k, v in x.items():
+                if k not in ("coverage", "rel", "status"):
+                    walk(v, r, where if r else k)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v, rel, where)
+    walk({k: v for k, v in data.items() if k not in ("rel", "status")})
+    return rep
+
+
+YEAR_KEYS = {  # key: (label, unit, release key)
+    "gdp_growth": ("GDP growth", "%", "weo"), "inflation_a": ("Inflation", "%", "weo"), "unemployment_a": ("Unemployment", "%", "weo"),
+    "gdp_usd": ("GDP", "US$", "weo"), "gov_debt": ("Government debt", "% of GDP", "weo"), "gov_balance": ("Budget balance", "% of GDP", "weo"),
+    "primary_balance": ("Primary balance", "% of GDP", "weo"), "current_account": ("Current account", "% of GDP", "weo"),
+    "revenue": ("Government revenue", "% of GDP", "weo"), "spending": ("Government spending", "% of GDP", "weo"),
+    "net_exports": ("Trade balance (net exports)", "% of GDP", "wb:NE.RSB.GNFS.ZS"), "exports_usd_a": ("Exports", "US$", "wb:NE.EXP.GNFS.CD"),
+    "imports_usd_a": ("Imports", "US$", "wb:NE.IMP.GNFS.CD"), "population": ("Population", "people", "wb:SP.POP.TOTL"),
+    "gdp_pc": ("GDP per person", "US$", "wb:NY.GDP.PCAP.CD"), "life_exp": ("Life expectancy", "years", "wb:SP.DYN.LE00.IN"),
+}
+
+
+def annual_export(map_rows):
+    """Calendar-year values for every country, for the year-by-year lookup: {iso3: {key: [first_year, [values]]}}."""
+    names = {r["iso3"]: r["name"] for r in map_rows.values()}
+    g20 = set(R.G20)
+    data, years = {}, set()
+    for iso3, H in ANNUAL_HIST.items():
+        if iso3 not in names:
+            continue
+        rec = {}
+        for k in YEAR_KEYS:
+            s_ = H.get(k)
+            if s_ is None or not len(s_):
+                continue
+            s_ = s_[s_.index.year >= 1980]
+            if not len(s_):
+                continue
+            y0, y1 = int(s_.index.year.min()), int(s_.index.year.max())
+            by = {int(d.year): float(v) for d, v in s_.items()}
+            rec[k] = [y0, [by.get(y) for y in range(y0, y1 + 1)]]
+            years.update(range(y0, y1 + 1))
+        if rec:
+            data[iso3] = rec
+    return {"data": data, "keys": {k: {"label": v[0], "unit": v[1], "rel": v[2]} for k, v in YEAR_KEYS.items()},
+            "names": {i: names[i] for i in data}, "g20": sorted(g20 & set(data)),
+            "years": [min(years), max(years)] if years else None, "estimate_from": int(TODAY.year), "rel": S.REL}
+
+
 def headline(prices, ports):
     vol = ports["global"].get("total") if ports else None
     oil = next((p["yoy"] for p in prices if p["name"] == "Brent crude"), None)
@@ -816,15 +1049,17 @@ def headline(prices, ports):
     return "Global economy: mixed signals."
 
 
-def save_history(econ):
-    rows = [{"date": TODAY.strftime("%Y-%m-%d"), "iso3": k, "score": v["score"]} for k, v in econ.items()]
-    new = pd.DataFrame(rows)
+def save_history(scores):
+    """Append today's scores ({iso3|WLD: score}) to data/score_history.csv; return {iso3: daily score series}."""
+    rows = [{"date": TODAY.strftime("%Y-%m-%d"), "iso3": k, "score": v} for k, v in scores.items() if v is not None]
+    new = pd.DataFrame(rows, columns=["date", "iso3", "score"])
     if HIST.exists():
         old = pd.read_csv(HIST)
-        new = pd.concat([old[old["date"] != rows[0]["date"]], new])
+        new = pd.concat([old[old["date"] != TODAY.strftime("%Y-%m-%d")], new])
     HIST.parent.mkdir(parents=True, exist_ok=True)
     new.to_csv(HIST, index=False)
-    return {i: g.sort_values("date")[["date", "score"]].dropna().values.tolist()[-120:] for i, g in new.groupby("iso3")}
+    new["date"] = pd.to_datetime(new["date"])
+    return {i: g.set_index("date")["score"].sort_index().astype(float) for i, g in new.groupby("iso3")}
 
 
 def main():
@@ -855,10 +1090,14 @@ def main():
         tb = SERIES_OUT[k].get("trade_balance_12m")
         if tb:
             e.setdefault("trade_m", {})["balance_12m"] = tb[-1][1]
+        full = history_series(e, full=True)
+        e["mchg"] = {mk: chg(full[mk], MATH_KIND[mk], "M") for mk in MATH_KIND if mk in full and len(full[mk])}
+        e["dchg"] = {dk: chg(v, MATH_KIND[dk], "A" if dk in ("s_minus_i", "twin", "trade_balance_usd") else "M")
+                     for dk, v in derived_series(e).items() if len(v)}
+        X_, M_ = e["_series"].get("exports_usd"), e["_series"].get("imports_usd")
+        if X_ is not None and M_ is not None:
+            TRADE_SER[k] = (X_.resample("MS").sum(min_count=1), M_.resample("MS").sum(min_count=1))
         e.pop("_series", None)
-    hist = save_history(econ)
-    for k in econ:
-        econ[k]["history"] = hist.get(k, [])
     for k, e in econ.items():
         if k in power:
             e["power"] = power[k]
@@ -882,7 +1121,9 @@ def main():
                 "name": e["name"], "iso3": e["iso3"], "policy": I.get("policy_rate", {}).get("latest"),
                 "policy_src": I.get("policy_rate", {}).get("source"), "long": I.get("long_rate", {}).get("latest"),
                 "real": real_rate_any(e), "real_est": e["math"].get("real_rate") is None and real_rate_any(e) is not None,
-                "curve": e["math"].get("curve"),
+                "curve": e["math"].get("curve"), "rel": I.get("policy_rate", {}).get("rel"), "rel_long": I.get("long_rate", {}).get("rel"),
+                "c": {"policy": I.get("policy_rate", {}).get("chg"), "long": I.get("long_rate", {}).get("chg"),
+                      "real": e["mchg"].get("real_rate"), "curve": e["mchg"].get("curve")},
                 "policy_y1": None if I.get("policy_rate", {}).get("year_ago") is None else I["policy_rate"]["latest"] - I["policy_rate"]["year_ago"],
                 "date": I.get("policy_rate", I.get("long_rate", {})).get("date")})
 
@@ -914,7 +1155,53 @@ def main():
         row.setdefault("inflation", row.get("inflation_a"))
         row.setdefault("unemployment", row.get("unemployment_a"))
         row.setdefault("gdp", row.get("gdp_growth"))
+        cc = {}
+        for disp, mon, ann in (("gdp", "gdp", "gdp_growth"), ("inflation", "inflation", "inflation_a"), ("unemployment", "unemployment", "unemployment_a")):
+            x = econ.get(iso3, {}).get("indicators", {}).get(mon)
+            if x and not x.get("annual") and row.get(disp) == x["latest"]:
+                cc[disp] = x["chg"]
+            elif ann in f:
+                cc[disp] = f[ann]["chg"]
+        for k in ("gov_debt", "current_account", "net_exports", "gdp_usd"):
+            if k in f:
+                cc[k] = f[k]["chg"]
+        if iso3 in power:
+            cc["power"] = power[iso3]["chg"]
+        if ports and iso3 in ports.get("pc", {}).get("economies", {}):
+            cc["trade"] = ports["pc"]["economies"][iso3]
+        row["c"] = cc
         map_rows[str(int(c.numeric))] = row
+
+    # Score history (all scored countries + world) -> score changes
+    allscores = {k: e["score"] for k, e in econ.items()}
+    allscores.update({r["iso3"]: r["score"] for r in map_rows.values() if r.get("basis") == "annual"})
+    allscores["WLD"] = world
+    hist = save_history(allscores)
+    for k in econ:
+        econ[k]["history"] = hist.get(k, pd.Series(dtype=float)).dropna().reset_index().values.tolist()[-120:]
+        econ[k]["history"] = [[d.strftime("%Y-%m-%d"), v] for d, v in econ[k]["history"]]
+        econ[k]["score_chg"] = chg(hist.get(k), "pts", "D")
+    for r in map_rows.values():
+        if r.get("score") is not None:
+            r["c"]["score"] = chg(hist.get(r["iso3"]), "pts", "D")
+    world_chg = chg(hist.get("WLD"), "pts", "D")
+
+    # All-economies total row for the trade table: sum over months every included economy reports
+    trade_totals = None
+    if TRADE_SER:
+        Xs = pd.concat({k: v[0] for k, v in TRADE_SER.items()}, axis=1)
+        Ms = pd.concat({k: v[1] for k, v in TRADE_SER.items()}, axis=1)
+        common = Xs.dropna().index.intersection(Ms.dropna().index)
+        if len(common) >= 2:
+            Xt, Mt = Xs.loc[common].sum(axis=1), Ms.loc[common].sum(axis=1)
+            X12, M12 = Xt.rolling(12).sum().dropna(), Mt.rolling(12).sum().dropna()
+            trade_totals = {"date": common[-1], "n": Xs.shape[1], "exports": float(Xt.iloc[-1]), "imports": float(Mt.iloc[-1]),
+                            "balance": float(Xt.iloc[-1] - Mt.iloc[-1]),
+                            "exports_12m": float(X12.iloc[-1]) if len(X12) else None,
+                            "imports_12m": float(M12.iloc[-1]) if len(M12) else None,
+                            "c": {"exports": chg(Xt, "pct", "M"), "imports": chg(Mt, "pct", "M"), "balance": chg(Xt - Mt, "abs", "M"),
+                                  "exports_12m": chg(X12, "pct", "M"), "imports_12m": chg(M12, "pct", "M"),
+                                  "balance_12m": chg((X12 - M12).dropna(), "abs", "M")}}
 
     data = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
@@ -922,15 +1209,16 @@ def main():
         "world": {"score": world, "label": label(world), "headline": headline(prices, ports), "breakdown": world_breakdown,
                   "trade_yoy": ports["global"].get("total") if ports else None,
                   "countries": len(map_rows), "tracked": len(econ),
-                  "scored": sum(1 for r in map_rows.values() if r.get("score") is not None)},
+                  "scored": sum(1 for r in map_rows.values() if r.get("score") is not None), "chg": world_chg},
         "drivers": drivers(econ, prices, ports),
         "economies": sorted(econ.values(), key=lambda e: (not e["g20"], -(e["score"] or -1))),
         "map": map_rows,
         "prices": prices, "markets": markets, "trade": ports, "products": R.PRODUCTS, "transport": transport,
-        "freight": freight.get("rows", []),
+        "freight": freight.get("rows", []), "trade_totals": trade_totals, "periods": C.NAMES, "rel": S.REL,
         "power": {k: v for k, v in power.items()},
         "status": S.STATUS,
     }
+    data["coverage"] = coverage_report(data)
     step("writing output")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(clean(data), separators=(",", ":")))
@@ -938,6 +1226,7 @@ def main():
         if e.get("history"):
             SERIES_OUT.setdefault(k, {})["score"] = [[d, round(v, 1)] for d, v in e["history"] if v is not None]
     (OUT.parent / "series.json").write_text(json.dumps(clean(SERIES_OUT), separators=(",", ":")))
+    (OUT.parent / "annual.json").write_text(json.dumps(clean(annual_export(map_rows)), separators=(",", ":")))
     ok = sum(v["ok"] for v in S.STATUS.values())
     print(f"Wrote {OUT} | sources ok {ok}/{len(S.STATUS)} | world score {world} | map countries {len(map_rows)}")
     for k, v in S.STATUS.items():
