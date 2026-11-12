@@ -93,7 +93,7 @@
         showTip(ev, h);
       })
       .on('mouseleave', () => { hideTip(); hl.style('opacity', 0); })
-      .on('click', (ev, d) => { const r = D.map?.[String(+d.id)]; const i = E.findIndex((e) => e.iso3 === r?.iso3); if (i >= 0) { filt = 'all'; renderGrid(); showDetail(i); $('economies').scrollIntoView(); } });
+      .on('click', (ev, d) => { const r = D.map?.[String(+d.id)]; const i = E.findIndex((e) => e.iso3 === r?.iso3); if (i >= 0) { filt = 'all'; renderGrid(); openDetail(i); } });
     const cps = (T?.chokepoints || []).filter((c) => ok(c.lon));
     cpG = svg.append('g');
     cps.forEach((c) => {
@@ -126,7 +126,7 @@
   function renderGrid() {
     const list = E.map((e, i) => [e, i]).filter(([e]) => (filt === 'all' || e.g20 || q) && (!q || e.name.toLowerCase().includes(q)));
     $('econ').innerHTML = list.map(([e, i]) => card(e, i)).join('') || '<p class="sub" style="padding:16px;background:#000">No match.</p>';
-    document.querySelectorAll('.eco').forEach((b) => b.addEventListener('click', () => showDetail(+b.dataset.i)));
+    document.querySelectorAll('.eco').forEach((b) => b.addEventListener('click', () => openDetail(+b.dataset.i)));
     document.querySelectorAll('.filters button').forEach((b) => b.classList.toggle('on', b.dataset.f === filt));
   }
   document.querySelectorAll('.filters button').forEach((b) => b.addEventListener('click', () => { filt = b.dataset.f; renderGrid(); }));
@@ -149,6 +149,14 @@
     return s.join(' ');
   }
   const fact = (k, val, m, extra = '') => `<li><div class="k">${esc(k)}</div><b>${val}</b><div class="m">${m}</div>${extra}</li>`;
+  function openDetail(i) {
+    showDetail(i);
+    const card = document.querySelector(`.eco[data-i="${i}"]`);
+    const back = () => (card || $('economies')).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $('dback')?.addEventListener('click', back);
+    $('dclose')?.addEventListener('click', () => { $('detail').innerHTML = ''; document.querySelectorAll('.eco').forEach((b) => b.classList.remove('on')); back(); });
+    requestAnimationFrame(() => $('detail').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }
   function showDetail(i) {
     document.querySelectorAll('.eco').forEach((b) => b.classList.toggle('on', +b.dataset.i === i));
     const e = E[i], I = e.indicators || {}, F = e.fundamentals || {}, V = e.vitals || {}, d = e.derived || {}, m = e.math || {};
@@ -162,7 +170,7 @@
       .filter(([k]) => ok(m[k])).map(([k, l, f]) => fact(l, f(m[k]), k === 'sahm' ? (m[k] >= 0.5 ? 'RECESSION SIGNAL' : 'NO SIGNAL (NEEDS 0.5)') : '')).join('');
     const vit = ['population', 'life_exp', 'age65', 'fertility', 'health_spend', 'net_migration', 'urban', 'gdp_pc', 'gini'].filter((k) => V[k])
       .map((k) => fact(V[k].label, big(V[k].value) + (V[k].unit.startsWith('%') ? '%' : ''), `${esc(V[k].unit).toUpperCase()} · ${V[k].year}${ok(V[k].ten_years_ago) ? ' · 10Y AGO ' + big(V[k].ten_years_ago) : ''}`)).join('');
-    $('detail').innerHTML = `<div class="detail"><h3>${esc(e.name)}</h3><div class="score" style="font-size:56px">${ok(e.score) ? Math.round(e.score) : '—'}<small>/100</small></div>
+    $('detail').innerHTML = `<div class="detail"><div class="dtop"><button class="back" id="dback">← All economies</button><button class="back" id="dclose" aria-label="Close">✕</button></div><h3>${esc(e.name)}</h3><div class="score" style="font-size:56px">${ok(e.score) ? Math.round(e.score) : '—'}<small>/100</small></div>
       <span class="pill ${esc(e.label)}">${esc(e.label)}</span><span class="mono small" style="margin-left:10px">${esc(e.coverage || '')} PILLARS</span>
       <p class="plain">${esc(plain(e)) || 'Detailed data fills in after the first automated run.'}</p>
       ${e.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(e.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25).replace(/%</g, '<')}</div>`).join('')}</div>` : ''}
@@ -331,4 +339,36 @@
     if (cur) set(cur); };
   addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(pick); } }, { passive: true });
   pick();
+})();
+
+// Every table: click a column header to sort (click again to reverse)
+(() => {
+  const val = (td) => {
+    const t = (td?.innerText || '').trim().toLowerCase();
+    if (!t || t === '—') return null;
+    if (/^\d{4}-\d{2}/.test(t)) return Number(t.slice(0, 7).replace('-', ''));
+    const m = t.replace(/−/g, '-').replace(/,/g, '').match(/-?\d+(\.\d+)?/);
+    if (!m) return t;
+    let v = parseFloat(m[0]);
+    if (/\dtn/.test(t)) v *= 1e12; else if (/\dbn/.test(t)) v *= 1e9; else if (/\dm\b/.test(t)) v *= 1e6;
+    if (t.includes('deficit') && v > 0) v = -v;
+    return v;
+  };
+  document.addEventListener('click', (ev) => {
+    const th = ev.target.closest('th'); if (!th) return;
+    const tbl = th.closest('table'), body = tbl?.tBodies[0]; if (!body) return;
+    const col = [...th.parentNode.children].indexOf(th);
+    const dir = th.dataset.dir ? (th.dataset.dir === 'desc' ? 'asc' : 'desc') : (col === 0 ? 'asc' : 'desc');
+    tbl.querySelectorAll('th').forEach((h) => { delete h.dataset.dir; h.classList.remove('sorted'); });
+    th.dataset.dir = dir; th.classList.add('sorted');
+    const rows = [...body.rows], pinned = rows.filter((r) => /^all shown/i.test(r.cells[0]?.innerText || ''));
+    const sortable = rows.filter((r) => !pinned.includes(r));
+    sortable.sort((a, b) => {
+      const x = val(a.cells[col]), y = val(b.cells[col]);
+      if (x === null && y === null) return 0; if (x === null) return 1; if (y === null) return -1;
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
+      return dir === 'asc' ? c : -c;
+    });
+    [...sortable, ...pinned].forEach((r) => body.appendChild(r));
+  });
 })();

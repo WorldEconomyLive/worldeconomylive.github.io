@@ -76,3 +76,5 @@ footer{padding:40px 0 0;font-size:10px;letter-spacing:.14em;color:var(--mute)}
 #scoretbl tbody tr{cursor:pointer}#scoretbl tbody tr:hover td{background:#0c0e11}#scoretbl tbody tr.sel td{background:#11161a}
 .hchart{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-top:14px;background:#050607}.hchart h3{margin:0}.hchart svg text{fill:var(--ink2);font-family:var(--mono);font-size:10px}
 .sd{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);margin-left:4px}
+th{cursor:pointer;user-select:none;white-space:nowrap}th:hover{color:var(--ink)}th.sorted{color:var(--ink)}th[data-dir="desc"]::after{content:" \2193"}th[data-dir="asc"]::after{content:" \2191"}
+#detail{scroll-margin-top:72px}.dtop{display:flex;justify-content:space-between;margin:-6px 0 10px}.back{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;background:none;color:var(--ink2);border:1px solid var(--line2);padding:6px 11px;border-radius:99px;cursor:pointer}.back:hover{color:var(--ink);border-color:var(--ink2)}
