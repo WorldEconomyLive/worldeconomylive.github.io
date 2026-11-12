@@ -251,7 +251,59 @@ def macro_math(e):
     return m
 
 
+def real_rate_any(e):
+    """Policy rate minus the latest inflation reading; falls back to annual inflation if no monthly CPI."""
+    if e["math"].get("real_rate") is not None:
+        return e["math"]["real_rate"]
+    I = e["indicators"]
+    i, pi = I.get("policy_rate", {}).get("latest"), I.get("inflation", {}).get("latest")
+    return None if i is None or pi is None else i - pi
+
+
 # ---------------------------------------------------------------- annual (all countries)
+ANNUAL_HIST: dict = {}   # iso3 -> {gdp_growth|inflation_a|unemployment_a: annual series}
+
+
+def z_annual(s, years=15, min_n=8):
+    """Robust z of this year's value vs the country's own past years (2020-21 excluded)."""
+    s = s.dropna()
+    if len(s) < min_n:
+        return None
+    h = s[(s.index.year >= s.index[-1].year - years) & ~s.index.year.isin([2020, 2021])]
+    if len(h) < min_n - 2:
+        return None
+    med = h.median()
+    sd = (h - med).abs().median() * 1.4826 or h.std()
+    if not sd or np.isnan(sd):
+        return None
+    return float(np.clip((s.iloc[-1] - med) / sd, -3, 3))
+
+
+def annual_score(iso3, ports, power):
+    """Score for countries without monthly data: IMF WEO estimates for the current year vs that country's own
+    history, blended with port cargo and electricity where available. Same 50 + 15*z scale."""
+    H, p = ANNUAL_HIST.get(iso3, {}), {}
+    g = H.get("gdp_growth")
+    if g is not None and len(g) and g.index[-1].year >= TODAY.year - 1:
+        p["activity"] = z_annual(g)
+    pz = power.get(iso3, {}).get("z")
+    if pz is not None:
+        p["activity"] = pz if p.get("activity") is None else (p["activity"] + pz) / 2
+    u = H.get("unemployment_a")
+    if u is not None and len(u) > 9 and u.index[-1].year >= TODAY.year - 1:
+        z = z_annual(u.diff().dropna())
+        p["labor"] = None if z is None else -z
+    pi = H.get("inflation_a")
+    if pi is not None and len(pi) and pi.index[-1].year >= TODAY.year - 1:
+        p["prices"] = z_annual(-(pi - 2.0).abs())
+    if ports and iso3 in ports.get("economies", {}):
+        p["trade"] = float(np.clip(ports["economies"][iso3] / 10, -3, 3))
+    zs = {k: v for k, v in p.items() if v is not None}
+    if len(zs) < 2:
+        return None, None
+    return float(np.clip(50 + 15 * np.mean(list(zs.values())), 0, 100)), {PILLAR_NAMES[k]: round(15 * v / len(zs), 2) for k, v in zs.items()}
+
+
 def annual_block():
     """IMF WEO + World Bank for every country. Returns ({iso3: {key: record}}, weo_release)."""
     from concurrent.futures import ThreadPoolExecutor
@@ -271,6 +323,8 @@ def annual_block():
             rel_used = rel
             for iso3, s in data.items():
                 s = s[s.index.year <= TODAY.year] * scale
+                if key in ("gdp_growth", "inflation_a", "unemployment_a"):
+                    ANNUAL_HIST.setdefault(iso3, {})[key] = s.dropna()
                 if len(s):
                     allc.setdefault(iso3, {})[key] = {"label": label, "unit": unit, "value": float(s.iloc[-1]),
                                                       "year": int(s.index[-1].year), "source": "IMF WEO",
@@ -603,6 +657,60 @@ def transport_block():
     return rows
 
 
+def freight_block():
+    """Rail and air freight outside the US: EU air (monthly), EU rail (quarterly), Canada rail (monthly).
+    Returns {"rows": [...table rows...], "z": {iso3: z of freight volume growth vs own history}}."""
+    rows, zs = [], {}
+
+    def add(iso3, mode, s, unit, quarterly=False):
+        s = s.dropna().sort_index()
+        s = s[~s.index.duplicated()]
+        if len(s) < (12 if quarterly else 27) or age_months(s) > (12 if quarterly else 8):
+            return
+        if quarterly:
+            y = ((s / s.shift(4) - 1) * 100).dropna()
+            z = z_last(y, min_n=12)
+        else:
+            s3 = s.rolling(3).sum()
+            y = ((s3 / s3.shift(12) - 1) * 100).dropna()        # last 3 months vs same 3 months a year ago
+            z = z_last(y, min_n=24)
+        if not len(y):
+            return
+        import pycountry
+        c = pycountry.countries.get(alpha_3=iso3)
+        rows.append({"country": c.name if c else iso3, "iso3": iso3, "mode": mode, "latest": float(s.iloc[-1]),
+                     "unit": unit, "date": s.index[-1], "yoy": float(y.iloc[-1]), "spark": spark(y, 24 if not quarterly else 12),
+                     "period": "quarter" if quarterly else "3 months"})
+        if z is not None:
+            zs.setdefault(iso3, []).append(z)
+
+    for name, fn, mode, unit, q in (("eurostat.air_freight", S.eu_air_freight, "Air freight", "tonnes", False),
+                                    ("eurostat.rail_freight", S.eu_rail_freight, "Rail freight", "thousand tonnes", True)):
+        try:
+            data = fn()
+            for iso3, ser in data.items():
+                add(iso3, mode, ser, unit, q)
+            S.log(name, True, f"{len(data)} countries")
+        except Exception as ex:
+            S.log(name, False, ex)
+    try:
+        add("CAN", "Rail carloadings", S.canada_rail(), "tonnes")
+        S.log("statcan.rail", True, "Canada")
+    except Exception as ex:
+        S.log("statcan.rail", False, ex)
+    return {"rows": rows, "z": {k: float(np.mean(v)) for k, v in zs.items()}}
+
+
+def activity_signals(power, freight):
+    """Combine electricity-demand and freight z-scores into one live activity signal per country."""
+    out = {}
+    for iso3 in set(power) | set((freight or {}).get("z", {})):
+        v = [x for x in (power.get(iso3, {}).get("z"), (freight or {}).get("z", {}).get(iso3)) if x is not None]
+        if v:
+            out[iso3] = {"z": float(np.mean(v))}
+    return out
+
+
 def global_stress(prices, ports):
     """Global supply/energy stress: z-scores of oil and gas price shocks and world port cargo."""
     comps = {}
@@ -675,16 +783,19 @@ def main():
     # Every block hits different servers, so run them side by side.
     from concurrent.futures import ThreadPoolExecutor
     jobs = {"macro": macro_block, "annual": annual_block, "prices": prices_block, "markets": markets_block,
-            "power": electricity_block, "transport": transport_block, "ports": ports_block}
+            "power": electricity_block, "transport": transport_block, "ports": ports_block, "freight": freight_block}
     res = {}
     with ThreadPoolExecutor(len(jobs)) as ex:
         futs = {k: ex.submit(timed, k, f) for k, f in jobs.items()}
         for k, fu in futs.items():
             res[k] = fu.result()
     econ, (annual, weo_rel), prices, markets = res["macro"], res["annual"], res["prices"], res["markets"]
-    power, transport, ports = res["power"], res["transport"], res["ports"]
+    power, transport, ports, freight = res["power"], res["transport"], res["ports"], res["freight"]
+    for r in transport:
+        r.setdefault("country", "United States")
+    act = activity_signals(power, freight)
     step("scoring")
-    score_economies(econ, ports, power)
+    score_economies(econ, ports, act)
     for k, e in econ.items():
         f = annual.get(k, {})
         e["vitals"] = {x: f[x] for x in R.VITAL_KEYS if x in f}
@@ -717,7 +828,8 @@ def main():
             markets["global_rates"].append({
                 "name": e["name"], "iso3": e["iso3"], "policy": I.get("policy_rate", {}).get("latest"),
                 "policy_src": I.get("policy_rate", {}).get("source"), "long": I.get("long_rate", {}).get("latest"),
-                "real": e["math"].get("real_rate"), "curve": e["math"].get("curve"),
+                "real": real_rate_any(e), "real_est": e["math"].get("real_rate") is None and real_rate_any(e) is not None,
+                "curve": e["math"].get("curve"),
                 "policy_y1": None if I.get("policy_rate", {}).get("year_ago") is None else I["policy_rate"]["latest"] - I["policy_rate"]["year_ago"],
                 "date": I.get("policy_rate", I.get("long_rate", {})).get("date")})
 
@@ -731,6 +843,10 @@ def main():
         for k in ("gdp_growth", "inflation_a", "unemployment_a", "gov_debt", "current_account", "gdp_usd", "population"):
             if k in f:
                 row[k] = f[k]["value"]
+        if iso3 not in econ:
+            sc_, contrib_ = annual_score(iso3, ports, act)
+            if sc_ is not None:
+                row.update(score=sc_, label=label(sc_), basis="annual", contrib=contrib_)
         if iso3 in econ:
             e = econ[iso3]
             row.update(name=e["name"], score=e["score"], label=e["label"], tracked=True)
@@ -752,11 +868,13 @@ def main():
         "weo_release": weo_rel,
         "world": {"score": world, "label": label(world), "headline": headline(prices, ports), "breakdown": world_breakdown,
                   "trade_yoy": ports["global"].get("total") if ports else None,
-                  "countries": len(map_rows), "tracked": len(econ)},
+                  "countries": len(map_rows), "tracked": len(econ),
+                  "scored": sum(1 for r in map_rows.values() if r.get("score") is not None)},
         "drivers": drivers(econ, prices, ports),
         "economies": sorted(econ.values(), key=lambda e: (not e["g20"], -(e["score"] or -1))),
         "map": map_rows,
         "prices": prices, "markets": markets, "trade": ports, "products": R.PRODUCTS, "transport": transport,
+        "freight": freight.get("rows", []),
         "power": {k: v for k, v in power.items()},
         "status": S.STATUS,
     }

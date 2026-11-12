@@ -75,6 +75,9 @@ def fake_port(pid, start):
 
 
 S.portwatch_port_daily = fake_port
+S.eu_air_freight = lambda: {i: pd.Series(1000 + 50 * rng.normal(size=len(months)), index=months) for i in ["DEU", "FRA", "NLD", "ITA"]}
+S.eu_rail_freight = lambda: {i: pd.Series(5000 + 300 * rng.normal(size=24), index=pd.date_range(end=months[-3], periods=24, freq="QS")) for i in ["DEU", "POL", "AUT"]}
+S.canada_rail = lambda: pd.Series(30e6 + 1e6 * rng.normal(size=len(months)), index=months)
 S.ember_monthly = lambda: pd.DataFrame([{"iso3": i, "date": d, "value": 50 + 5 * np.sin(k / 6) + rng.normal(0, 1)} for i in set(ALL) for k, d in enumerate(months)])
 S.bts_monthly = lambda: pd.DataFrame({"system_use_freight_rail": rng.uniform(9e5, 1.1e6, len(months)), "system_use_rail_intermodal": rng.uniform(1.1e6, 1.4e6, len(months)),
                                      "freight_air_revenue_ton_miles": rng.uniform(3e9, 4e9, len(months)), "waterborne_freight": rng.uniform(1, 2, len(months))}, index=months)

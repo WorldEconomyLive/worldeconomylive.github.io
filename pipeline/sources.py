@@ -5,6 +5,7 @@ OECD (CC BY 4.0), ECB, BIS, IMF (via DBnomics), Eurostat, World Bank (CC BY 4.0)
 US Treasury and NY Fed (US government), IMF PortWatch.
 """
 import io
+import zipfile
 import json
 import re
 import time
@@ -513,6 +514,95 @@ def ember_monthly() -> pd.DataFrame:
         except Exception as e:
             last = (str(e) or type(e).__name__)[:80]
     raise RuntimeError(last or "ember unavailable")
+
+
+# ---------------- Freight by mode outside the US (open data) ----------------
+def dbnomics_dims(provider, dataset, dims, limit=1000):
+    """All series of a DBnomics dataset matching a dimension filter. Returns {series_code: (series, dimensions)}."""
+    q = requests.utils.quote(json.dumps(dims))
+    out, offset = {}, 0
+    while True:
+        url = (f"https://api.db.nomics.world/v22/series/{provider}/{dataset}?dimensions={q}"
+               f"&observations=1&limit={limit}&offset={offset}&format=json")
+        js = _get(url, timeout=120).json().get("series", {})
+        docs = js.get("docs", [])
+        for d in docs:
+            try:
+                out[d["series_code"]] = (_series([None if v == "NA" else v for v in d["value"]],
+                                                 [_period_to_ts(x) for x in d["period"]], d["series_code"]),
+                                         d.get("dimensions", {}))
+            except Exception:
+                pass
+        offset += len(docs)
+        if not docs or offset >= js.get("num_found", 0):
+            return out
+
+
+def _geo_iso3(code):
+    code = {"EL": "GR", "UK": "GB"}.get(code, code)
+    try:
+        import pycountry
+        c = pycountry.countries.get(alpha_2=code)
+        return c.alpha_3 if c else None
+    except Exception:
+        return None
+
+
+def eurostat_by_country(dataset, dims):
+    """{iso3: series} for a Eurostat dataset via DBnomics; aggregates (EU27 etc.) dropped."""
+    res = {}
+    for code, (s, d) in dbnomics_dims("Eurostat", dataset, dims).items():
+        iso = _geo_iso3(d.get("geo") or code.split(".")[-1])
+        if iso and len(s) and (iso not in res or len(s) > len(res[iso])):
+            res[iso] = s
+    if not res:
+        raise RuntimeError(f"{dataset}: no series")
+    return res
+
+
+def eu_air_freight():
+    """Monthly air freight and mail loaded + unloaded, tonnes (Eurostat avia_gooc)."""
+    return eurostat_by_country("avia_gooc", {"freq": ["M"], "unit": ["T"], "tra_meas": ["FRM_LD_NLD"],
+                                             "schedule": ["TOT"], "tra_cov": ["TOTAL"]})
+
+
+def eu_rail_freight():
+    """Quarterly goods transported by rail, thousand tonnes (Eurostat rail_go_quartal)."""
+    return eurostat_by_country("rail_go_quartal", {"freq": ["Q"], "unit": ["THS_T"]})
+
+
+def canada_rail():
+    """Monthly railway carloadings, total tonnes, Canada (Statistics Canada table 23-10-0216-01, open licence)."""
+    meta = _get("https://www150.statcan.gc.ca/t1/wds/rest/getFullTableDownloadCSV/23100216/en", timeout=60).json()
+    url = meta.get("object") if isinstance(meta, dict) else None
+    if not url:
+        raise RuntimeError("statcan: no download link")
+    z = zipfile.ZipFile(io.BytesIO(_get(url, timeout=180).content))
+    name = next(n for n in z.namelist() if n.endswith(".csv") and "MetaData" not in n)
+    df = pd.read_csv(z.open(name), low_memory=False)
+    df = df[df["GEO"].astype(str).str.strip() == "Canada"]
+    if "UOM" in df.columns:
+        t = df[df["UOM"].astype(str).str.lower().str.contains("tonne")]
+        df = t if len(t) else df
+    skip = {"REF_DATE", "GEO", "DGUID", "UOM", "UOM_ID", "SCALAR_FACTOR", "SCALAR_ID", "VECTOR", "COORDINATE",
+            "VALUE", "STATUS", "SYMBOL", "TERMINATED", "DECIMALS"}
+    dims = [c for c in df.columns if c not in skip and df[c].nunique() > 1]
+    for c in dims:                                        # prefer the total of every breakdown
+        tot = df[df[c].astype(str).str.contains("Total", case=False)]
+        if len(tot):
+            df = tot
+    df = df.assign(VALUE=pd.to_numeric(df["VALUE"], errors="coerce")).dropna(subset=["VALUE"])
+    key = [c for c in dims if df[c].nunique() > 1]
+    if key:                                               # still several series: keep the biggest
+        big = df.groupby(key)["VALUE"].mean().idxmax()
+        big = big if isinstance(big, tuple) else (big,)
+        for c, v in zip(key, big):
+            df = df[df[c] == v]
+    s = df.groupby(pd.to_datetime(df["REF_DATE"].astype(str) + "-01", errors="coerce"))["VALUE"].sum().sort_index()
+    s = s[s.index.notna()]
+    if len(s) < 24:
+        raise RuntimeError(f"statcan: only {len(s)} months")
+    return s
 
 
 # ---------------- US Bureau of Transportation Statistics (public domain) ----------------

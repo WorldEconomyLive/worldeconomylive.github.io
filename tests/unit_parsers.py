@@ -47,3 +47,25 @@ print("ember ok")
 import registry as R
 assert all(c in R.FX_UNITS for c in R.FX if c != "USD")
 print("fx ok")
+
+# DBnomics dimension query (Eurostat freight) and StatCan zip parsing
+import json as _j, zipfile as _z
+def fake_get(url, timeout=60, **k):
+    if "db.nomics" in url:
+        docs = [{"series_code": f"M.T.FRM_LD_NLD.TOT.TOTAL.{g}", "dimensions": {"geo": g},
+                 "period": [f"2024-{m:02d}" for m in range(1, 13)], "value": [100 + m for m in range(12)]} for g in ["DE", "EL", "EU27_2020"]]
+        return types.SimpleNamespace(json=lambda: {"series": {"docs": docs, "num_found": 3}})
+    if "getFullTableDownloadCSV" in url:
+        return types.SimpleNamespace(json=lambda: {"status": "SUCCESS", "object": "https://x/23100216-eng.zip"})
+    rows = []
+    for d in pd.date_range("2022-01-01", "2026-08-01", freq="MS"):
+        for comp, v in [("Total traffic carried", 30e6), ("Intermodal traffic loaded", 3e6)]:
+            rows.append({"REF_DATE": d.strftime("%Y-%m"), "GEO": "Canada", "DGUID": "x", "Railway carloadings components": comp,
+                         "UOM": "Tonnes", "VALUE": v, "VECTOR": "v1"})
+        rows.append({"REF_DATE": d.strftime("%Y-%m"), "GEO": "Eastern Division", "DGUID": "x", "Railway carloadings components": "Total traffic carried", "UOM": "Tonnes", "VALUE": 1, "VECTOR": "v2"})
+    buf = io.BytesIO(); zf = _z.ZipFile(buf, "w"); zf.writestr("23100216.csv", pd.DataFrame(rows).to_csv(index=False)); zf.writestr("23100216_MetaData.csv", "x"); zf.close()
+    return types.SimpleNamespace(content=buf.getvalue())
+S._get = fake_get
+a = S.eu_air_freight(); assert set(a) == {"DEU", "GRC"}, a.keys()
+c = S.canada_rail(); assert len(c) == 56 and c.iloc[-1] == 30e6, (len(c), c.iloc[-1])
+print("freight ok")

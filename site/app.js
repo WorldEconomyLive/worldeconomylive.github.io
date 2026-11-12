@@ -5,7 +5,7 @@
   const num = (v, d = 1) => (ok(v) ? Number(v).toFixed(d) : '—');
   const sg = (v, d = 1, suf = '%') => (ok(v) ? (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(d) + suf : '—');
   const cls = (v, goodUp = true) => (!ok(v) || v === 0 ? '' : (v > 0) === goodUp ? 'pos' : 'neg');
-  const big = (v) => !ok(v) ? '—' : Math.abs(v) >= 1e12 ? (v / 1e12).toFixed(2) + 'tn' : Math.abs(v) >= 1e9 ? (v / 1e9).toFixed(1) + 'bn' : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + 'm' : Math.abs(v) >= 1e4 ? Math.round(v).toLocaleString() : num(v);
+  const big = (v) => !ok(v) ? '—' : Math.abs(v) >= 1e12 ? (v / 1e12).toFixed(2) + 'tn' : Math.abs(v) >= 1e9 ? (v / 1e9).toFixed(1) + 'bn' : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + 'm' : Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : num(v);
   const usd = (v) => !ok(v) ? '—' : (v < 0 ? '−$' : '$') + big(Math.abs(v));
   const POS = [62, 230, 196], NEG = [255, 77, 109], MID = [28, 31, 36];
   function div(v, cap) { // diverging color on black
@@ -45,7 +45,7 @@
   $('headline').textContent = w.headline || '';
   const bd = w.breakdown || {};
   if (ok(bd['economies (GDP-weighted)'])) $('breakdown').textContent = `ECONOMIES ${Math.round(bd['economies (GDP-weighted)'])} · GLOBAL STRESS ${ok(bd['global stress']) ? Math.round(bd['global stress']) : '—'}`;
-  if (w.tracked) $('coverage').textContent = `${w.tracked} ECONOMIES IN DEPTH · ${w.countries} COUNTRIES ON THE MAP`;
+  if (w.tracked) $('coverage').textContent = `${w.scored || w.tracked} COUNTRIES SCORED · ${w.tracked} IN DEPTH · ${w.countries} ON THE MAP`;
 
   // ---------------- map ----------------
   const LAYERS = {
@@ -85,7 +85,7 @@
         let h = `<b>${esc(r?.name || d.properties.name)}</b>`;
         if (r) { if (ok(r.score)) h += `<br>Score ${num(r.score, 0)} · ${esc(r.label)}`; if (ok(r.gdp)) h += `<br>GDP growth ${sg(r.gdp)}`; if (ok(r.inflation)) h += `<br>Inflation ${num(r.inflation)}%`; if (ok(r.unemployment)) h += `<br>Unemployment ${num(r.unemployment)}%`;
           if (ok(r.gov_debt)) h += `<br>Gov. debt ${num(r.gov_debt, 0)}% of GDP`; if (ok(r.current_account)) h += `<br>Current account ${sg(r.current_account)} of GDP`; if (ok(r.gdp_usd)) h += `<br>GDP ${usd(r.gdp_usd)}`; if (ok(r.trade)) h += `<br>Port cargo ${sg(r.trade, 0)} y/y`; if (ok(r.power)) h += `<br>Power use ${sg(r.power, 1)} y/y`;
-          if (!r.tracked) h += '<br><span style="color:#5f646d">annual data (IMF/World Bank)</span>'; }
+          if (!r.tracked) h += `<br><span style="color:#5f646d">${r.basis === 'annual' ? 'score from IMF annual estimates' + (ok(r.trade) || ok(r.power) ? ' + live port/power data' : '') : 'annual data (IMF/World Bank)'}</span>`; }
         else h += '<br><span style="color:#5f646d">not tracked yet</span>';
         showTip(ev, h);
       })
@@ -226,14 +226,21 @@
   $('power').innerHTML = PW.length ? table(['Country', 'Demand, latest month', 'Last 3 months y/y', 'Trend (y/y)', 'Month'],
     PW.slice(0, 40).map((r) => `<tr><td>${esc(r.name)}</td><td>${num(r.twh, 1)} TWh</td><td class="${cls(r.yoy_3m)}">${sg(r.yoy_3m)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(String(r.date).slice(0, 7))}</td></tr>`))
     : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
-  const TR = D.transport || [];
-  $('transport').innerHTML = TR.length ? table(['Mode', 'Latest', 'vs a year ago', 'Trend', 'Month'],
-    TR.map((r) => `<tr><td>${esc(r.name)}</td><td>${big(r.latest)}</td><td class="${cls(r.yoy)}">${sg(r.yoy)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(String(r.date).slice(0, 7))}</td></tr>`))
+  const TR = [...(D.transport || []).map((r) => ({country: r.country || 'United States', mode: r.name, latest: r.latest, unit: '', yoy: r.yoy, spark: r.spark, date: r.date})),
+    ...(D.freight || []).sort((a, b) => a.mode.localeCompare(b.mode) || (b.latest ?? 0) - (a.latest ?? 0))];
+  $('transport').innerHTML = TR.length ? table(['Country', 'Mode', 'Latest', 'vs a year ago', 'Trend (y/y)', 'Period'],
+    TR.map((r) => `<tr><td>${esc(r.country)}</td><td>${esc(r.mode)}</td><td>${big(r.latest)}${r.unit ? ' <span class="na">' + esc(r.unit) + '</span>' : ''}</td><td class="${cls(r.yoy)}">${sg(r.yoy)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(String(r.date).slice(0, 7))}</td></tr>`))
     : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
 
   // ---------------- commodities ----------------
-  const vol = (s) => (T?.global && s ? T.global[s] : null);
-  $('prices').innerHTML = (D.prices || []).map((p) => `<div class="row"><div>${esc(p.name)}<div class="m">${num(p.level, 2)} ${esc(p.unit || '')} · ${esc(String(p.date).slice(0, 7))}</div></div><div>${bar(p.yoy, 'var(--warm)', 100)}${p.ship ? bar(vol(p.ship), 'var(--dim)', 100) : ''}</div></div>`).join('') || '<p class="sub">Fills in on the first automated run.</p>';
+  $('prices').innerHTML = (D.prices || []).length ? table(['Commodity', 'Price', 'Unit', 'vs a year ago', 'Trend', 'Month'],
+    D.prices.map((p) => `<tr><td>${esc(p.name)}</td><td>${num(p.level, p.level < 10 ? 2 : 1)}</td><td class="na">${esc(p.unit || '')}</td><td class="${cls(p.yoy, false)}">${sg(p.yoy)}</td><td>${p.spark ? spark(p.spark, 90, 22) : ''}</td><td class="na">${esc(String(p.date).slice(0, 7))}</td></tr>`))
+    : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
+  const SHIP = [['tanker', 'Tankers — crude, fuel, gas, chemicals'], ['dry_bulk', 'Dry bulk — ores, coal, grain, fertilizer'],
+    ['container', 'Containers — manufactured goods, coffee, cotton'], ['general_cargo', 'General cargo — steel, machinery'], ['roro', 'Ro-ro — cars and trucks'], ['total', 'All cargo']];
+  const G = T?.global || {};
+  $('shiptypes').innerHTML = SHIP.filter(([k]) => ok(G[k])).map(([k, n]) => `<div class="row"><div>${n}<div class="m">${sg(G[k])} vs a year ago</div></div><div>${bar(G[k], 'var(--pos)', 30)}</div></div>`).join('')
+    || '<p class="sub">Fills in on the next automated run.</p>';
 
   // ---------------- markets ----------------
   const mrow = (r, pp) => `<tr><td>${esc(r.name)}</td><td>${num(r.latest, r.latest < 10 ? 4 : 2)}</td><td class="${cls(r.m1)}">${pp ? sg(r.m1, 2, ' pp') : sg(r.m1, 1)}</td><td class="${cls(r.y1)}">${pp ? sg(r.y1, 2, ' pp') : sg(r.y1, 1)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`;
@@ -242,7 +249,7 @@
     `<tr><td class="mono">${esc(r.pair || r.name)}</td><td class="def">${esc(r.meaning || r.name)}</td><td>${num(r.latest, r.latest < 10 ? 4 : 2)}</td><td>${sg(r.m1, 1)}</td><td>${sg(r.y1, 1)}</td><td class="${cls(r.ccy_y1)}">${sg(r.ccy_y1, 1)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`)) : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
   const GR = M.global_rates || [];
   $('grates').innerHTML = GR.length ? table(['Economy', 'Policy rate', 'Change, 1y', '10-year yield', 'Real policy rate', 'Curve (10y − policy)', 'Source', 'Date'],
-    GR.map((r) => `<tr><td>${esc(r.name)}</td><td>${ok(r.policy) ? num(r.policy, 2) + '%' : '—'}</td><td class="${cls(r.policy_y1, false)}">${sg(r.policy_y1, 2, ' pp')}</td><td>${ok(r.long) ? num(r.long, 2) + '%' : '—'}</td><td class="${cls(r.real)}">${sg(r.real, 2, '%')}</td><td class="${cls(r.curve)}">${sg(r.curve, 2, ' pp')}</td><td class="na">${esc(r.policy_src || 'OECD')}</td><td class="na">${esc(String(r.date || '').slice(0, 7))}</td></tr>`))
+    GR.map((r) => `<tr><td>${esc(r.name)}</td><td>${ok(r.policy) ? num(r.policy, 2) + '%' : '—'}</td><td class="${cls(r.policy_y1, false)}">${sg(r.policy_y1, 2, ' pp')}</td><td>${ok(r.long) ? num(r.long, 2) + '%' : '—'}</td><td class="${cls(r.real)}">${sg(r.real, 2, '%')}${r.real_est ? '*' : ''}</td><td class="${cls(r.curve)}">${sg(r.curve, 2, ' pp')}</td><td class="na">${esc(r.policy_src || 'OECD')}</td><td class="na">${esc(String(r.date || '').slice(0, 7))}</td></tr>`))
     : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
   $('rates').innerHTML = (M.rates || []).length ? table(['Rate', 'Latest %', '1 month', '1 year', '12 months', 'Date'], M.rates.map((r) => mrow(r, 1))) : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
   $('usfiscal').innerHTML = (M.us_fiscal || []).map((r) => `<h3>${esc(r.name)}</h3><div class="score" style="font-size:44px">${usd(r.latest)}</div><p class="mono small">${esc(r.date)} · ${ok(r.y1_abs) ? usd(r.y1_abs) + ' IN 12 MONTHS (' + sg(r.y1, 1) + ')' : ''}</p>`).join('');

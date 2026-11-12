@@ -91,22 +91,24 @@
     <h3>Electricity demand</h3>
     <p class="sub">Power use is one of the fastest real-time signals of economic activity. Last 3 months vs the same 3 months a year ago. Ember, 88 countries.</p>
     <div class="tbl" id="power"></div>
-    <h3>US freight by mode</h3>
-    <p class="sub">Rail, air and water freight. US Bureau of Transportation Statistics, monthly. No free global source exists for air cargo or rail; more countries will be added as open data allows.</p>
+    <h3>Rail and air freight</h3>
+    <p class="sub">Goods moved by rail and air, vs a year ago. United States: Bureau of Transportation Statistics (monthly). Europe: Eurostat air freight (monthly, last 3 months) and rail freight (quarterly). Canada: Statistics Canada railway carloadings (monthly). Freight growth feeds each country's output pillar alongside electricity demand. Global air cargo (IATA) is paid data and isn't included.</p>
     <div class="tbl" id="transport"></div>
   </section>
 
   <section id="commodities">
     <h2><span>07</span>Commodities</h2>
-    <p class="sub">Price vs a year ago, next to how much of that kind of cargo is moving by sea. Monthly, World Bank Pink Sheet.</p>
-    <div class="legend-row mono"><i style="background:var(--warm)"></i>Price <i style="background:var(--dim)"></i>Volume shipped</div>
-    <div class="bars" id="prices"></div>
+    <p class="sub">Price change vs a year ago. Monthly, World Bank Pink Sheet.</p>
+    <div id="prices"></div>
+    <h3>Sea cargo by ship type</h3>
+    <p class="sub">Tonnes handled at the world's busiest ports (IMF PortWatch sample), last 4 weeks vs the same weeks a year ago. Ship type, not individual commodity: a tanker figure covers crude, fuel, gas and chemicals together.</p>
+    <div class="bars" id="shiptypes"></div>
   </section>
 
   <section id="markets">
     <h2><span>08</span>Markets</h2>
     <h3>Global interest rates</h3>
-    <p class="sub">Central bank policy rates (BIS) and 10-year government bond yields (OECD). Real rate = policy rate − inflation. Curve = 10-year − policy.</p>
+    <p class="sub">Central bank policy rates (BIS) and 10-year government bond yields (OECD). Real rate = policy rate − inflation (* = latest annual inflation, used where monthly CPI is unavailable). Curve = 10-year − policy.</p>
     <div class="tbl" id="grates"></div>
     <h3>Currencies (spot)</h3>
     <p class="sub" id="fxnote"></p>
@@ -125,7 +127,7 @@
   <section id="method">
     <h2><span>10</span>Method</h2>
     <details open><summary>The score</summary>
-      <p>Up to four pillars per economy: <b>output</b> (factory output growth, or GDP growth, blended with electricity demand), <b>jobs</b> (12-month change in unemployment, inverted), <b>prices</b> (distance of inflation from 2%, inverted) and <b>trade</b> (port cargo vs a year ago). Each is compared with that country's own last 10 years using the median and median absolute deviation, leaving out the pandemic distortion (March 2020 to December 2021). An economy needs at least two pillars to be scored.</p>
+      <p>Up to four pillars per economy: <b>output</b> (factory output growth, or GDP growth, blended with electricity demand), <b>jobs</b> (12-month change in unemployment, inverted), <b>prices</b> (distance of inflation from 2%, inverted) and <b>trade</b> (port cargo vs a year ago). Each is compared with that country's own last 10 years using the median and median absolute deviation, leaving out the pandemic distortion (March 2020 to December 2021). An economy needs at least two pillars to be scored. Countries without monthly data are scored the same way from IMF World Economic Outlook estimates for the current year (growth, inflation, change in unemployment) against their own past 15 years, plus port cargo and electricity where available; their map tooltip says so.</p>
       <p>The <b>world score</b> is 80% the GDP-weighted average of economy scores and 20% <b>global stress</b>: oil and gas price shocks against their own 15-year history, and world port cargo vs a year ago.</p>
       <p class="mono small">60+ STRONG · 45–60 STEADY · 35–45 SOFT · &lt;35 STRESSED</p>
     </details>
@@ -143,5 +145,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
 <script src="app.js"></script>
+<script data-goatcounter="https://worldeconomylive.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>
