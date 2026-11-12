@@ -73,78 +73,123 @@ def z_last(s, years=10, min_n=24):
     return float(np.clip((s.iloc[-1] - h.mean()) / sd, -3, 3))
 
 
-# ---------------------------------------------------------------- macro (monthly)
-_WB_CACHE = {}
+# ---------------------------------------------------------------- macro (monthly, batched)
+_WB_ALL: dict = {}
 
 
-def fetch_candidate(cand, iso3):
-    kind = cand[0]
-    if kind == "oecd_key":
-        _, flow, key, tf = cand
-        df = S.oecd_frame(flow, key)
-        s = S._series(df["OBS_VALUE"], df["TIME_PERIOD"].map(S._period_to_ts), key)
-        label, attrs = "OECD", {}
-    elif kind == "oecd":
-        _, flow, filters, prefer, tf = cand
-        s, attrs = S.oecd_pick(flow, filters, prefer)
-        label = "OECD"
-    elif kind == "dbn":
-        _, sid, tf = cand
-        s, label, attrs = S.dbnomics(sid), "Eurostat" if sid.startswith("Eurostat") else "DBnomics", {}
-    elif kind == "bis":
-        _, cc, tf = cand
-        s, label, attrs = S.bis_policy_rate(cc), "BIS", {}
-    elif kind == "wb":
-        _, ind, tf = cand
-        if ind not in _WB_CACHE:
-            _WB_CACHE[ind] = S.worldbank(ind, list(R.ECONOMIES))
-        d = _WB_CACHE[ind]
-        d = d[d.iso3 == iso3].sort_values("year")
-        s = S._series(d["value"], d["year"].astype(str) + "-07-01", ind)
-        label, attrs = "World Bank (annual)", {}
-    else:
-        raise RuntimeError(f"unknown kind {kind}")
+def wb_all(ind):
+    if ind not in _WB_ALL:
+        _WB_ALL[ind] = S.worldbank_all(ind)
+    return _WB_ALL[ind]
+
+
+def transform(s, tf, attrs):
+    if attrs.get("TRANSFORMATION") in ("GY", "G1", "GQ") and tf in ("yoy", "yoyq"):
+        return s                                    # already a growth rate
     if tf == "yoy":
-        s = yoy(s)
-    elif tf == "yoyq":
-        s = yoy(s, 4, "QS")
-    elif tf == "usd_bn":
+        return yoy(s)
+    if tf == "yoyq":
+        return yoy(s, 4, "QS")
+    if tf == "usd_bn":
         mult = attrs.get("UNIT_MULT")
         try:
-            s = s * (10 ** int(float(mult))) / 1e9 if mult not in (None, "", "nan") else s
+            return s * (10 ** int(float(mult))) / 1e9 if mult not in (None, "", "nan") else s / 1e9
         except ValueError:
-            pass
-    return s.dropna(), label, kind == "wb"
+            return s
+    return s
 
 
-def first_fresh(cands, iso3, key):
-    errs = []
-    for cand in cands:
-        try:
-            s, label, annual = fetch_candidate(cand, iso3)
-            age = (TODAY - s.index[-1]).days / 30.4
-            if len(s) >= 6 and age <= (30 if annual else R.MAX_STALE_MONTHS):
-                S.log(key, True, label)
-                return s, label, annual
-            errs.append(f"{cand[0]}: stale")
-        except Exception as e:
-            errs.append(f"{cand[0]}: {str(e)[:40]}")
-    S.log(key, False, " | ".join(errs[-3:]))
-    return None, None, False
+def age_months(s):
+    return (TODAY - s.index[-1]).days / 30.4
+
+
+def fallback_series(cand, iso3):
+    kind = cand[0]
+    if kind == "dbn":
+        _, sid, tf = cand
+        return transform(S.dbnomics(sid), tf, {}), "Eurostat", False
+    if kind == "wb":
+        _, ind, tf = cand
+        d = wb_all(ind)
+        d = d[d.iso3 == iso3].sort_values("year")
+        return S._series(d["value"], d["year"].astype(str) + "-07-01", ind), "World Bank (annual)", True
+    raise RuntimeError(kind)
 
 
 def macro_block():
+    areas = list(R.ECONOMIES)
+    batch = {}
+    for ind, spec in R.OECD_SPECS.items():
+        try:
+            got = S.oecd_batch(spec, areas)
+            res = {}
+            for iso3, (s, attrs) in got.items():
+                s = transform(s, spec["transform"], attrs).dropna()
+                b = spec.get("bounds")
+                if len(s) and (b is None or abs(s.iloc[-1]) <= b):
+                    res[iso3] = s
+            batch[ind] = res
+            S.log(f"oecd.{ind}", bool(res), f"{len(res)}/{len(areas)} economies")
+        except Exception as e:
+            batch[ind] = {}
+            S.log(f"oecd.{ind}", False, e)
+    try:
+        bis = S.bis_batch(["XM" if i in R.EURO else R.ECONOMIES[i][1] for i in areas])
+        S.log("bis.policy_rates", True, f"{len(bis)} central banks")
+    except Exception as e:
+        bis = {}
+        S.log("bis.policy_rates", False, e)
+
     out = {}
-    for iso3, (name, iso2, geo, num) in R.ECONOMIES.items():
-        e = {"name": name, "iso3": iso3, "num": num, "indicators": {}, "pillars": {}}
-        series = {}
-        for ind, cands in R.monthly_candidates(iso3).items():
-            s, label, annual = first_fresh(cands, iso3, f"{iso3}.{ind}")
-            series[ind] = None if annual else s
-            if s is not None:
+    for iso3, (name, iso2, geo) in R.ECONOMIES.items():
+        e = {"name": name, "iso3": iso3, "g20": iso3 in R.G20, "indicators": {}, "pillars": {}}
+        series, fb = {}, R.fallbacks(iso3)
+        for ind in ["gdp", "inflation", "unemployment", "industry", "long_rate", "short_rate", "exports_usd", "imports_usd"]:
+            best = None   # (series, label, annual)
+            s = batch.get(ind, {}).get(iso3)
+            if s is not None and age_months(s) <= R.MAX_STALE_MONTHS:
+                best = (s, "OECD", False)
+            if best is None or age_months(best[0]) > R.FRESH_MONTHS:
+                for cand in fb.get(ind, []):
+                    try:
+                        s2, lab, annual = fallback_series(cand, iso3)
+                        lim = 30 if annual else R.MAX_STALE_MONTHS
+                        if len(s2) < 3 or age_months(s2) > lim:
+                            continue
+                        if best is None or (not annual and age_months(s2) < age_months(best[0])):
+                            best = (s2, lab, annual)
+                        if not annual and age_months(s2) <= R.FRESH_MONTHS:
+                            break
+                    except Exception:
+                        continue
+            if best:
+                s, lab, annual = best
+                series[ind] = None if annual else s
+                q = ind == "gdp"
                 e["indicators"][ind] = {"latest": float(s.iloc[-1]), "date": s.index[-1], "annual": annual,
-                                        "year_ago": value_ago(s, 335), "source": label,
-                                        "spark": spark(s, 24, "QS" if ind == "gdp" else "MS") if not annual else []}
+                                        "year_ago": value_ago(s, 335), "source": lab,
+                                        "spark": [] if annual else spark(s, 20 if q else 24, "QS" if q else "MS")}
+        b = bis.get("XM" if iso3 in R.EURO else iso2)
+        if b is not None and age_months(b) <= R.MAX_STALE_MONTHS:
+            series["policy_rate"] = b
+            e["indicators"]["policy_rate"] = {"latest": float(b.iloc[-1]), "date": b.index[-1], "annual": False,
+                                              "year_ago": value_ago(b, 335), "source": "BIS", "spark": spark(b, 24)}
+        elif "short_rate" in e["indicators"]:
+            e["indicators"]["policy_rate"] = dict(e["indicators"]["short_rate"], source="OECD (3-month rate)")
+            series["policy_rate"] = series.get("short_rate")
+        # monthly merchandise trade in US$ -> balance
+        X, Mi = series.get("exports_usd"), series.get("imports_usd")
+        if X is not None and Mi is not None:
+            bal = (X - Mi).dropna()
+            if len(bal):
+                e["indicators"]["trade_balance_usd"] = {"latest": float(bal.iloc[-1]), "date": bal.index[-1], "annual": False,
+                                                        "year_ago": value_ago(bal, 335), "source": "OECD", "spark": spark(bal, 24)}
+                e["trade_m"] = {"exports": float(X.iloc[-1]), "imports": float(Mi.iloc[-1]), "balance": float(bal.iloc[-1]),
+                                "exports_yoy": pct(float(X.iloc[-1]), value_ago(X, 335)),
+                                "imports_yoy": pct(float(Mi.iloc[-1]), value_ago(Mi, 335)),
+                                "exports_12m": float(X.iloc[-12:].sum()) if len(X) >= 12 else None,
+                                "imports_12m": float(Mi.iloc[-12:].sum()) if len(Mi) >= 12 else None,
+                                "date": X.index[-1]}
         if series.get("industry") is not None:
             e["pillars"]["activity"] = z_last(series["industry"])
         elif series.get("gdp") is not None:
@@ -162,8 +207,8 @@ def macro_block():
 
 def macro_math(e):
     I, m, series = e["indicators"], {}, e["_series"]
-    g = lambda k: I[k]["latest"] if k in I else None  # noqa: E731
-    pi, u, i, lr, gy = g("inflation"), g("unemployment"), g("policy_rate"), g("long_rate"), g("gdp")
+    g = lambda k: I[k]["latest"] if k in I and not I[k].get("annual") else None  # noqa: E731
+    pi, u, i, lr = g("inflation"), g("unemployment"), g("policy_rate"), g("long_rate")
     if i is not None and pi is not None:
         m["real_rate"] = i - pi
     if pi is not None and u is not None:
@@ -185,74 +230,53 @@ def macro_math(e):
     return m
 
 
-# ---------------------------------------------------------------- annual blocks
-def vitals_block():
-    out = {k: {} for k in R.ECONOMIES}
-    for key, (ind, label, unit) in R.VITALS.items():
+# ---------------------------------------------------------------- annual (all countries)
+def annual_block():
+    """IMF WEO + World Bank for every country. Returns ({iso3: {key: record}}, weo_release)."""
+    allc, rel_used = {}, None
+    for key, (code, label, unit, scale) in R.WEO.items():
         try:
-            df = S.worldbank(ind, list(R.ECONOMIES))
-            S.log(f"worldbank.{ind}", True)
+            data, rel = S.weo_all(code, [rel_used] if rel_used else R.WEO_RELEASES)
+            rel_used = rel
+            for iso3, s in data.items():
+                s = s[s.index.year <= TODAY.year] * scale
+                if len(s):
+                    allc.setdefault(iso3, {})[key] = {"label": label, "unit": unit, "value": float(s.iloc[-1]),
+                                                      "year": int(s.index[-1].year), "source": "IMF WEO",
+                                                      "estimate": bool(s.index[-1].year >= TODAY.year - 0)}
+            S.log(f"weo.{key}", True, f"{len(data)} countries")
+        except Exception as e:
+            S.log(f"weo.{key}", False, e)
+    for key, (ind, label, unit) in R.WB.items():
+        try:
+            df = wb_all(ind)
             for iso3, g in df.groupby("iso3"):
                 g = g.sort_values("year")
                 last = g.iloc[-1]
                 ten = g[g["year"] <= last["year"] - 10]
-                out.setdefault(iso3, {})[key] = {"label": label, "unit": unit, "value": float(last["value"]),
-                                                 "year": int(last["year"]),
-                                                 "ten_years_ago": float(ten.iloc[-1]["value"]) if len(ten) else None}
+                allc.setdefault(iso3, {})[key] = {"label": label, "unit": unit, "value": float(last["value"]),
+                                                  "year": int(last["year"]), "source": "World Bank", "estimate": False,
+                                                  "ten_years_ago": float(ten.iloc[-1]["value"]) if len(ten) else None}
+            S.log(f"worldbank.{ind}", True, f"{df.iso3.nunique()} countries")
         except Exception as e:
             S.log(f"worldbank.{ind}", False, e)
-    return out
-
-
-def fundamentals_block():
-    out = {i: {} for i in R.ECONOMIES}
-    wb = {}
-    weo_ok = None  # remember which WEO release works
-    for key, (label, unit, cands) in R.FUNDAMENTALS.items():
-        for iso3 in R.ECONOMIES:
-            got = None
-            for kind, code, scale in cands:
-                try:
-                    if kind == "weo":
-                        rels = [weo_ok] if weo_ok else R.WEO_RELEASES
-                        for rel in rels:
-                            try:
-                                s = S.dbnomics(f"IMF/{rel}/{iso3}.{code}") * scale
-                                weo_ok = rel
-                                break
-                            except Exception:
-                                s = None
-                        if s is None:
-                            continue
-                        s = s[s.index.year <= TODAY.year]
-                        if len(s):
-                            got = (float(s.iloc[-1]), int(s.index[-1].year), "IMF WEO", bool(s.index[-1].year >= TODAY.year))
-                    else:
-                        if code not in wb:
-                            wb[code] = S.worldbank(code, list(R.ECONOMIES))
-                        d = wb[code][wb[code].iso3 == iso3].sort_values("year")
-                        if len(d):
-                            got = (float(d.iloc[-1]["value"]) * scale, int(d.iloc[-1]["year"]), "World Bank", False)
-                except Exception:
-                    continue
-                if got:
-                    break
-            if got:
-                out[iso3][key] = {"label": label, "unit": unit, "value": got[0], "year": got[1],
-                                  "source": got[2], "estimate": got[3]}
-        S.log(f"fund.{key}", any(key in out[i] for i in out))
-    return out
+    # fall back to World Bank debt when WEO has none
+    for iso3, d in allc.items():
+        if "gov_debt" not in d and "debt_wb" in d:
+            d["gov_debt"] = dict(d["debt_wb"], label="Government debt")
+    return allc, rel_used
 
 
 def derive(e, f):
     I, d = e["indicators"], {}
-    if "exports_usd" in f and "imports_usd" in f and f["exports_usd"]["year"] == f["imports_usd"]["year"]:
-        d["trade_balance_usd"] = {"value": f["exports_usd"]["value"] - f["imports_usd"]["value"], "year": f["exports_usd"]["year"]}
-    gr = I.get("gdp", {}).get("latest") if not I.get("gdp", {}).get("annual") else None
+    X, M = f.get("exports_usd_a"), f.get("imports_usd_a")
+    if X and M and X["year"] == M["year"]:
+        d["trade_balance_usd"] = {"value": X["value"] - M["value"], "year": X["year"]}
+    gr = I.get("gdp", {}).get("latest") if not I.get("gdp", {}).get("annual") else f.get("gdp_growth", {}).get("value")
     pi = I.get("inflation", {}).get("latest")
     r = I.get("long_rate", {}).get("latest")
     if gr is not None and pi is not None and r is not None:
-        g = gr + pi                                   # nominal growth (approx.)
+        g = gr + pi
         d["nominal_growth"], d["r_minus_g"] = g, r - g
         debt = f.get("gov_debt", {}).get("value")
         if debt is not None:
@@ -260,8 +284,8 @@ def derive(e, f):
             pb = f.get("primary_balance", {}).get("value")
             if pb is not None:
                 d["fiscal_gap"] = pb - d["pb_stabilizing"]
-    if "savings" in f and "investment" in f:
-        d["s_minus_i"] = f["savings"]["value"] - f["investment"]["value"]
+    if "savings" in f and ("investment_weo" in f or "investment" in f):
+        d["s_minus_i"] = f["savings"]["value"] - (f.get("investment_weo") or f["investment"])["value"]
     if "current_account" in f and "gov_balance" in f:
         d["twin"] = f["current_account"]["value"] + f["gov_balance"]["value"]
     return d
@@ -276,7 +300,7 @@ def prices_block():
         S.log("worldbank.pinksheet", False, e)
         return []
     rows = []
-    for prefix, name, ship in R.COMMODITIES:
+    for prefix, name, ship, unit in R.COMMODITIES:
         col = next((c for c in ps.columns if str(c).lower().startswith(prefix.lower())), None)
         if not col:
             continue
@@ -284,30 +308,37 @@ def prices_block():
         if len(s) < 13:
             continue
         rows.append({"name": name, "ship": ship, "level": float(s.iloc[-1]), "date": s.index[-1],
-                     "unit": "", "m1": pct(float(s.iloc[-1]), float(s.iloc[-2])),
+                     "unit": unit, "m1": pct(float(s.iloc[-1]), float(s.iloc[-2])),
                      "yoy": pct(float(s.iloc[-1]), value_ago(s, 360)), "spark": spark(s, 24)})
     return rows
 
 
 def markets_block():
-    out = {"fx": [], "rates": [], "us_fiscal": []}
+    out = {"fx": [], "rates": [], "us_fiscal": [], "global_rates": [], "fx_note": "ECB euro foreign exchange reference rates (spot, set daily around 14:15 CET), converted to US-dollar pairs through the euro: USD/XXX = (XXX per EUR) ÷ (USD per EUR)."}
     start = (TODAY - pd.Timedelta(days=430)).strftime("%Y-%m-%d")
     try:
         fx = S.ecb_fx(R.FX, start).ffill()
         S.log("ecb.fx", True)
-        usd = fx["USD"]
-        series = {"EUR": usd}                               # USD per EUR
-        if "GBP" in fx:
-            series["GBP"] = usd / fx["GBP"]                 # USD per GBP
-        for c in R.FX:
-            if c not in ("USD", "GBP") and c in fx:
-                series[c] = fx[c] / usd                     # units per USD
-        for c, s in series.items():
-            s = s.dropna()
-            last = float(s.iloc[-1])
-            out["fx"].append({"name": R.FX_NAMES.get(c, c), "code": c, "latest": last, "date": s.index[-1],
-                              "m1": pct(last, value_ago(s, 30)), "y1": pct(last, value_ago(s, 365)),
-                              "spark": spark(s, 13), "unit": "%"})
+        usd = fx["USD"]                                     # USD per 1 EUR
+        series = {}
+        for c in ["EUR"] + [x for x in R.FX if x != "USD"]:
+            if c == "EUR":
+                s_, pair, meaning = usd, "EUR/USD", "US dollars per 1 euro"
+            elif c not in fx:
+                continue
+            elif c in R.FX_BASE_IS_FOREIGN:
+                s_, pair, meaning = usd / fx[c], f"{c}/USD", f"US dollars per 1 {R.FX_NAMES[c].split(' ')[-1]}"
+            else:
+                s_, pair, meaning = fx[c] / usd, f"USD/{c}", f"{R.FX_NAMES[c].split(' ')[-1]} per 1 US dollar"
+            s_ = s_.dropna()
+            last = float(s_.iloc[-1])
+            # sign so that + always means the foreign currency strengthened vs USD
+            strong = 1 if c in R.FX_BASE_IS_FOREIGN or c == "EUR" else -1
+            m1, y1 = pct(last, value_ago(s_, 30)), pct(last, value_ago(s_, 365))
+            out["fx"].append({"name": R.FX_NAMES.get(c, c), "code": c, "pair": pair, "meaning": meaning,
+                              "latest": last, "date": s_.index[-1], "m1": m1, "y1": y1,
+                              "ccy_y1": None if y1 is None else strong * y1,
+                              "spark": spark(s_, 13), "unit": "%"})
     except Exception as e:
         S.log("ecb.fx", False, e)
 
@@ -512,15 +543,17 @@ def save_history(econ):
 
 
 def main():
+    import pycountry
     econ = macro_block()
-    vitals = vitals_block()
-    fund = fundamentals_block()
+    annual, weo_rel = annual_block()
     prices = prices_block()
     markets = markets_block()
     ports = ports_block()
     score_economies(econ, ports)
     for k, e in econ.items():
-        e["vitals"], e["fundamentals"] = vitals.get(k, {}), fund.get(k, {})
+        f = annual.get(k, {})
+        e["vitals"] = {x: f[x] for x in R.VITAL_KEYS if x in f}
+        e["fundamentals"] = {x: v for x, v in f.items() if x not in R.VITAL_KEYS}
         e["math"] = macro_math(e)
         e["derived"] = derive(e, e["fundamentals"])
         e.pop("_series", None)
@@ -529,24 +562,50 @@ def main():
         econ[k]["history"] = hist.get(k, [])
     scores = [e["score"] for e in econ.values() if e["score"] is not None]
     world = float(np.mean(scores)) if scores else None
+
+    # Global rates table (every tracked economy)
+    for e in econ.values():
+        I = e["indicators"]
+        if "policy_rate" in I or "long_rate" in I:
+            markets["global_rates"].append({
+                "name": e["name"], "iso3": e["iso3"], "policy": I.get("policy_rate", {}).get("latest"),
+                "policy_src": I.get("policy_rate", {}).get("source"), "long": I.get("long_rate", {}).get("latest"),
+                "real": e["math"].get("real_rate"), "curve": e["math"].get("curve"),
+                "policy_y1": None if I.get("policy_rate", {}).get("year_ago") is None else I["policy_rate"]["latest"] - I["policy_rate"]["year_ago"],
+                "date": I.get("policy_rate", I.get("long_rate", {})).get("date")})
+
+    # Map: every country with any data, keyed by ISO numeric
     map_rows = {}
-    for iso3, num in R.ISO_NUM.items():
-        row = {"iso3": iso3}
+    for iso3 in set(annual) | set(econ) | set((ports or {}).get("economies", {})):
+        c = pycountry.countries.get(alpha_3=iso3)
+        if not c:
+            continue
+        f, row = annual.get(iso3, {}), {"iso3": iso3, "name": c.name}
+        for k in ("gdp_growth", "inflation_a", "unemployment_a", "gov_debt", "current_account", "gdp_usd", "population"):
+            if k in f:
+                row[k] = f[k]["value"]
         if iso3 in econ:
             e = econ[iso3]
-            row.update(name=e["name"], score=e["score"], label=e["label"],
-                       inflation=e["indicators"].get("inflation", {}).get("latest"),
-                       unemployment=e["indicators"].get("unemployment", {}).get("latest"))
+            row.update(name=e["name"], score=e["score"], label=e["label"], tracked=True)
+            for k in ("inflation", "unemployment", "gdp"):
+                x = e["indicators"].get(k)
+                if x and not x.get("annual"):
+                    row[k] = x["latest"]
         if ports and iso3 in ports["economies"]:
             row["trade"] = ports["economies"][iso3]
-        if len(row) > 1:
-            map_rows[str(num)] = row
+        row.setdefault("inflation", row.get("inflation_a"))
+        row.setdefault("unemployment", row.get("unemployment_a"))
+        row.setdefault("gdp", row.get("gdp_growth"))
+        map_rows[str(int(c.numeric))] = row
+
     data = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "weo_release": weo_rel,
         "world": {"score": world, "label": label(world), "headline": headline(prices, ports),
-                  "trade_yoy": ports["global"].get("total") if ports else None},
+                  "trade_yoy": ports["global"].get("total") if ports else None,
+                  "countries": len(map_rows), "tracked": len(econ)},
         "drivers": drivers(econ, prices, ports),
-        "economies": list(econ.values()),
+        "economies": sorted(econ.values(), key=lambda e: (not e["g20"], -(e["score"] or -1))),
         "map": map_rows,
         "prices": prices, "markets": markets, "trade": ports, "products": R.PRODUCTS,
         "status": S.STATUS,
@@ -554,7 +613,7 @@ def main():
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(clean(data), separators=(",", ":")))
     ok = sum(v["ok"] for v in S.STATUS.values())
-    print(f"Wrote {OUT} | sources ok {ok}/{len(S.STATUS)} | world score {world}")
+    print(f"Wrote {OUT} | sources ok {ok}/{len(S.STATUS)} | world score {world} | map countries {len(map_rows)}")
     for k, v in S.STATUS.items():
         if not v["ok"]:
             print(f"  MISSING {k}: {v['note']}")

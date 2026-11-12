@@ -27,9 +27,10 @@
     <div class="score"><span id="wscore">—</span><small>/100</small></div>
     <div class="pill" id="wlabel">Pending</div>
     <p class="headline" id="headline">Loading the world…</p>
+    <p class="mono small" id="coverage"></p>
   </div>
   <div class="layers" id="layers">
-    <button data-l="score" class="on">Score</button><button data-l="inflation">Inflation</button><button data-l="unemployment">Jobless</button><button data-l="trade">Port trade</button>
+    <button data-l="score" class="on">Score</button><button data-l="gdp">Growth</button><button data-l="inflation">Inflation</button><button data-l="unemployment">Jobless</button><button data-l="debt">Debt</button><button data-l="ca">Current acct</button><button data-l="trade">Port trade</button>
   </div>
   <div class="legend mono" id="legend"></div>
   <div class="tip mono" id="tip"></div>
@@ -46,6 +47,7 @@
   <section id="economies">
     <h2><span>02</span>Economies</h2>
     <p class="sub">Vital-signs score, 0–100. 50 is normal for that country. Tap one for the full readout.</p>
+    <div class="filters"><button data-f="g20" class="on">G20</button><button data-f="all">All tracked</button><input id="q" placeholder="Search country" autocomplete="off"></div>
     <div class="grid" id="econ"></div>
     <div id="detail"></div>
   </section>
@@ -73,7 +75,10 @@
     <h2><span>05</span>Global trade</h2>
     <p class="sub" id="tradesub">Cargo through each region's busiest ports vs the same days a year ago.</p>
     <div class="tbl" id="heat"></div>
-    <h3>Imports vs exports by region</h3>
+    <h3>Merchandise trade in dollars</h3>
+    <p class="sub" id="tusdsub">Monthly goods exports and imports in US$ (OECD international merchandise trade).</p>
+    <div class="tbl" id="tradeusd"></div>
+    <h3>Port cargo: imports vs exports by region</h3>
     <div class="bars" id="impexp"></div>
     <h3>Shipping chokepoints</h3>
     <p class="sub">Ships through the world's key straits and canals vs a year ago.</p>
@@ -89,9 +94,13 @@
 
   <section id="markets">
     <h2><span>07</span>Markets</h2>
-    <h3>Currencies</h3>
+    <h3>Global interest rates</h3>
+    <p class="sub">Central bank policy rates (BIS) and 10-year government bond yields (OECD). Real rate = policy rate − inflation. Curve = 10-year − policy.</p>
+    <div class="tbl" id="grates"></div>
+    <h3>Currencies (spot)</h3>
+    <p class="sub" id="fxnote"></p>
     <div class="tbl" id="fx"></div>
-    <h3>US interest rates</h3>
+    <h3>US Treasury curve</h3>
     <div class="tbl" id="rates"></div>
     <div id="usfiscal"></div>
   </section>

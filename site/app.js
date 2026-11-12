@@ -43,10 +43,14 @@
   $('wscore').textContent = ok(w.score) ? Math.round(w.score) : '—';
   $('wlabel').textContent = w.label || 'Pending'; $('wlabel').className = 'pill ' + (w.label || '');
   $('headline').textContent = w.headline || '';
+  if (w.tracked) $('coverage').textContent = `${w.tracked} ECONOMIES IN DEPTH · ${w.countries} COUNTRIES ON THE MAP`;
 
   // ---------------- map ----------------
   const LAYERS = {
     score: { get: (r) => r.score, color: (v) => div(ok(v) ? v - 50 : null, 25), legend: ['Stressed', 'Normal', 'Strong'], ramp: [div(-25, 25), div(0, 25), div(25, 25)], fmt: (v) => num(v, 0) + ' / 100' },
+    gdp: { get: (r) => r.gdp, color: (v) => div(v, 6), legend: ['−6%', '0', '+6%'], ramp: [div(-6, 6), div(0, 6), div(6, 6)] },
+    debt: { get: (r) => r.gov_debt, color: (v) => seq(v, 0, 150, NEG), legend: ['0%', '', '150%+ of GDP'], ramp: [seq(0, 0, 150, NEG), seq(150, 0, 150, NEG)] },
+    ca: { get: (r) => r.current_account, color: (v) => div(v, 8), legend: ['Deficit', '0', 'Surplus'], ramp: [div(-8, 8), div(0, 8), div(8, 8)] },
     inflation: { get: (r) => r.inflation, color: (v) => seq(v, 0, 8, NEG), legend: ['0%', '', '8%+'], ramp: [seq(0, 0, 8, NEG), seq(8, 0, 8, NEG)], fmt: (v) => num(v) + '% a year' },
     unemployment: { get: (r) => r.unemployment, color: (v) => seq(v, 2, 10, NEG), legend: ['2%', '', '10%+'], ramp: [seq(2, 2, 10, NEG), seq(10, 2, 10, NEG)], fmt: (v) => num(v) + '% jobless' },
     trade: { get: (r) => r.trade, color: (v) => div(v, 30), legend: ['−30%', '0', '+30%'], ramp: [div(-30, 30), div(0, 30), div(30, 30)], fmt: (v) => sg(v, 0) + ' port cargo y/y' },
@@ -74,12 +78,14 @@
       .on('mousemove', (ev, d) => {
         const r = D.map?.[String(+d.id)], L = LAYERS[layer];
         let h = `<b>${esc(r?.name || d.properties.name)}</b>`;
-        if (r) { if (ok(r.score)) h += `<br>Score ${num(r.score, 0)} · ${esc(r.label)}`; if (ok(r.inflation)) h += `<br>Inflation ${num(r.inflation)}%`; if (ok(r.unemployment)) h += `<br>Unemployment ${num(r.unemployment)}%`; if (ok(r.trade)) h += `<br>Port cargo ${sg(r.trade, 0)} y/y`; }
+        if (r) { if (ok(r.score)) h += `<br>Score ${num(r.score, 0)} · ${esc(r.label)}`; if (ok(r.gdp)) h += `<br>GDP growth ${sg(r.gdp)}`; if (ok(r.inflation)) h += `<br>Inflation ${num(r.inflation)}%`; if (ok(r.unemployment)) h += `<br>Unemployment ${num(r.unemployment)}%`;
+          if (ok(r.gov_debt)) h += `<br>Gov. debt ${num(r.gov_debt, 0)}% of GDP`; if (ok(r.current_account)) h += `<br>Current account ${sg(r.current_account)} of GDP`; if (ok(r.gdp_usd)) h += `<br>GDP ${usd(r.gdp_usd)}`; if (ok(r.trade)) h += `<br>Port cargo ${sg(r.trade, 0)} y/y`;
+          if (!r.tracked) h += '<br><span style="color:#5f646d">annual data (IMF/World Bank)</span>'; }
         else h += '<br><span style="color:#5f646d">not tracked yet</span>';
         showTip(ev, h);
       })
       .on('mouseleave', hideTip)
-      .on('click', (ev, d) => { const r = D.map?.[String(+d.id)]; const i = E.findIndex((e) => e.iso3 === r?.iso3); if (i >= 0) { showDetail(i); $('economies').scrollIntoView(); } });
+      .on('click', (ev, d) => { const r = D.map?.[String(+d.id)]; const i = E.findIndex((e) => e.iso3 === r?.iso3); if (i >= 0) { filt = 'all'; renderGrid(); showDetail(i); $('economies').scrollIntoView(); } });
     const cps = (T?.chokepoints || []).filter((c) => ok(c.lon));
     cpG = svg.append('g');
     cps.forEach((c) => {
@@ -103,15 +109,26 @@
 
   // ---------------- economies ----------------
   const PIL = { activity: 'ACT', labor: 'JOBS', prices: 'PRICE', trade: 'TRADE' };
-  $('econ').innerHTML = E.map((e, i) => `<button class="eco" data-i="${i}"><div class="n">${esc(e.name)}</div>
+  let filt = 'g20', q = '';
+  function card(e, i) {
+    return `<button class="eco" data-i="${i}"><div class="n">${esc(e.name)}</div>
     <div class="s">${ok(e.score) ? Math.round(e.score) : '—'}</div><span class="pill ${esc(e.label)}">${esc(e.label)}</span>
-    <div class="chips">${Object.entries(PIL).map(([k, l]) => { const z = e.pillars?.[k]; const c = !ok(z) ? 'var(--mute)' : z > 0.5 ? 'var(--pos)' : z < -0.5 ? 'var(--neg)' : 'var(--ink2)'; return `<span class="chip" style="color:${c}">${l} ${!ok(z) ? '·' : z > 0.5 ? '▲' : z < -0.5 ? '▼' : '●'}</span>`; }).join('')}</div></button>`).join('');
+    <div class="chips">${Object.entries(PIL).map(([k, l]) => { const z = e.pillars?.[k]; const c = !ok(z) ? 'var(--mute)' : z > 0.5 ? 'var(--pos)' : z < -0.5 ? 'var(--neg)' : 'var(--ink2)'; return `<span class="chip" style="color:${c}">${l} ${!ok(z) ? '·' : z > 0.5 ? '▲' : z < -0.5 ? '▼' : '●'}</span>`; }).join('')}</div></button>`;
+  }
+  function renderGrid() {
+    const list = E.map((e, i) => [e, i]).filter(([e]) => (filt === 'all' || e.g20 || q) && (!q || e.name.toLowerCase().includes(q)));
+    $('econ').innerHTML = list.map(([e, i]) => card(e, i)).join('') || '<p class="sub" style="padding:16px;background:#000">No match.</p>';
+    document.querySelectorAll('.eco').forEach((b) => b.addEventListener('click', () => showDetail(+b.dataset.i)));
+    document.querySelectorAll('.filters button').forEach((b) => b.classList.toggle('on', b.dataset.f === filt));
+  }
+  document.querySelectorAll('.filters button').forEach((b) => b.addEventListener('click', () => { filt = b.dataset.f; renderGrid(); }));
+  $('q').addEventListener('input', (ev) => { q = ev.target.value.trim().toLowerCase(); renderGrid(); });
   const IND = {
     gdp: ['GDP growth', (x) => sg(x.latest), 'vs a year ago'], inflation: ['Inflation', (x) => num(x.latest) + '%', 'a year'],
     unemployment: ['Unemployment', (x) => num(x.latest) + '%', 'of workers'], industry: ['Factory output', (x) => sg(x.latest), 'vs a year ago'],
     policy_rate: ['Central bank rate', (x) => num(x.latest, 2) + '%', ''], long_rate: ['10-year bond yield', (x) => num(x.latest, 2) + '%', ''],
-    exports: ['Goods exports', (x) => sg(x.latest), 'vs a year ago'], imports: ['Goods imports', (x) => sg(x.latest), 'vs a year ago'],
-    trade_balance: ['Trade balance (month)', (x) => usd(x.latest * 1e9), ''],
+    exports_usd: ['Goods exports (month)', (x) => usd(x.latest * 1e9), ''], imports_usd: ['Goods imports (month)', (x) => usd(x.latest * 1e9), ''],
+    trade_balance_usd: ['Goods trade balance (month)', (x) => usd(x.latest * 1e9), ''],
   };
   function plain(e) {
     const I = e.indicators || {}, s = [];
@@ -143,7 +160,7 @@
       ${live ? `<h3>Live indicators</h3><ul class="facts">${live}</ul>` : ''}${mth ? `<h3>Formulas</h3><ul class="facts">${mth}</ul>` : ''}
       ${gov ? `<h3>Government and trade</h3><ul class="facts">${gov}</ul>` : ''}${vit ? `<h3>People and health</h3><ul class="facts">${vit}</ul>` : ''}</div>`;
   }
-  document.querySelectorAll('.eco').forEach((b) => b.addEventListener('click', () => showDetail(+b.dataset.i)));
+  renderGrid();
 
   // ---------------- scorecard ----------------
   const I_ = (e, k) => e.indicators?.[k]?.latest;
@@ -158,7 +175,7 @@
   $('fund').innerHTML = table(['Economy', 'GDP', 'Debt % GDP', 'Budget bal.', 'Primary bal.', 'Current acct', 'Exports', 'Imports', 'Trade bal.', 'Twin bal.', 'FX reserves'],
     E.map((e) => `<tr><td>${esc(e.name)}</td><td>${usd(F_(e, 'gdp_usd')?.value)}</td><td>${fv(e, 'gov_debt')}</td><td class="${cls(F_(e, 'gov_balance')?.value)}">${fv(e, 'gov_balance', 1)}</td>
       <td class="${cls(F_(e, 'primary_balance')?.value)}">${fv(e, 'primary_balance', 1)}</td><td class="${cls(F_(e, 'current_account')?.value)}">${fv(e, 'current_account', 1)}</td>
-      <td>${usd(F_(e, 'exports_usd')?.value)}</td><td>${usd(F_(e, 'imports_usd')?.value)}</td><td class="${cls(e.derived?.trade_balance_usd?.value)}">${usd(e.derived?.trade_balance_usd?.value)}</td>
+      <td>${usd(F_(e, 'exports_usd_a')?.value)}</td><td>${usd(F_(e, 'imports_usd_a')?.value)}</td><td class="${cls(e.derived?.trade_balance_usd?.value)}">${usd(e.derived?.trade_balance_usd?.value)}</td>
       <td class="${cls(e.derived?.twin)}">${sg(e.derived?.twin, 1, '')}</td><td>${usd(F_(e, 'reserves_usd')?.value)}</td></tr>`));
   const comp = E.filter((e) => F_(e, 'consumption') && F_(e, 'investment') && F_(e, 'gov_consumption'));
   $('comp').innerHTML = comp.length ? `<div class="bars">${comp.map((e) => {
@@ -187,13 +204,29 @@
       `<div class="row"><div>${esc(c.name)}<div class="m">${num(c.daily_transits, 0)} SHIPS/DAY</div></div>${bar(c.transits_yoy, (c.transits_yoy ?? 0) < 0 ? 'var(--neg)' : 'var(--pos)')}</div>`).join('');
   } else { $('heat').innerHTML = '<p class="sub" style="padding:14px">Port data pending.</p>'; }
 
+  // ---------------- merchandise trade in US$ ----------------
+  const TU = E.filter((e) => e.trade_m).sort((a, b) => (b.trade_m.exports_12m ?? 0) - (a.trade_m.exports_12m ?? 0));
+  if (TU.length) {
+    const tot = (k) => TU.reduce((a, e) => a + (e.trade_m[k] ?? 0), 0);
+    const bn = (v) => !ok(v) ? '—' : (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(1) + 'bn';
+    $('tradeusd').innerHTML = table(['Economy', 'Exports (month)', 'Imports (month)', 'Balance (month)', 'Exports y/y', 'Imports y/y', 'Exports, 12m', 'Imports, 12m', 'Month'],
+      TU.map((e) => { const t = e.trade_m; return `<tr><td>${esc(e.name)}</td><td>${bn(t.exports)}</td><td>${bn(t.imports)}</td><td class="${cls(t.balance)}">${bn(t.balance)}</td><td class="${cls(t.exports_yoy)}">${sg(t.exports_yoy)}</td><td class="${cls(t.imports_yoy)}">${sg(t.imports_yoy)}</td><td>${ok(t.exports_12m) ? '$' + (t.exports_12m / 1000).toFixed(2) + 'tn' : '—'}</td><td>${ok(t.imports_12m) ? '$' + (t.imports_12m / 1000).toFixed(2) + 'tn' : '—'}</td><td class="na">${esc(String(t.date).slice(0, 7))}</td></tr>`; })
+      .concat([`<tr><td><b>All shown</b></td><td><b>${bn(tot('exports'))}</b></td><td><b>${bn(tot('imports'))}</b></td><td><b>${bn(tot('balance'))}</b></td><td></td><td></td><td><b>$${(tot('exports_12m') / 1000).toFixed(2)}tn</b></td><td><b>$${(tot('imports_12m') / 1000).toFixed(2)}tn</b></td><td></td></tr>`]));
+  } else { $('tradeusd').innerHTML = '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>'; }
+
   // ---------------- commodities ----------------
   const vol = (s) => (T?.global && s ? T.global[s] : null);
-  $('prices').innerHTML = (D.prices || []).map((p) => `<div class="row"><div>${esc(p.name)}<div class="m">${num(p.level, 2)} · ${esc(String(p.date).slice(0, 7))}</div></div><div>${bar(p.yoy, 'var(--warm)', 100)}${p.ship ? bar(vol(p.ship), 'var(--dim)', 100) : ''}</div></div>`).join('') || '<p class="sub">Fills in on the first automated run.</p>';
+  $('prices').innerHTML = (D.prices || []).map((p) => `<div class="row"><div>${esc(p.name)}<div class="m">${num(p.level, 2)} ${esc(p.unit || '')} · ${esc(String(p.date).slice(0, 7))}</div></div><div>${bar(p.yoy, 'var(--warm)', 100)}${p.ship ? bar(vol(p.ship), 'var(--dim)', 100) : ''}</div></div>`).join('') || '<p class="sub">Fills in on the first automated run.</p>';
 
   // ---------------- markets ----------------
   const mrow = (r, pp) => `<tr><td>${esc(r.name)}</td><td>${num(r.latest, r.latest < 10 ? 4 : 2)}</td><td class="${cls(r.m1)}">${pp ? sg(r.m1, 2, ' pp') : sg(r.m1, 1)}</td><td class="${cls(r.y1)}">${pp ? sg(r.y1, 2, ' pp') : sg(r.y1, 1)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`;
-  $('fx').innerHTML = (M.fx || []).length ? table(['Currency', 'Latest', '1 month', '1 year', '12 months', 'Date'], M.fx.map((r) => mrow(r))) : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
+  $('fxnote').textContent = (M.fx_note || '') + ' "Currency vs USD" shows whether that currency gained (+) or lost (−) value against the dollar over the year.';
+  $('fx').innerHTML = (M.fx || []).length ? table(['Pair', 'Means', 'Spot', '1 month', '1 year', 'Currency vs USD, 1y', '12 months', 'Date'], M.fx.map((r) =>
+    `<tr><td class="mono">${esc(r.pair || r.name)}</td><td class="def">${esc(r.meaning || r.name)}</td><td>${num(r.latest, r.latest < 10 ? 4 : 2)}</td><td>${sg(r.m1, 1)}</td><td>${sg(r.y1, 1)}</td><td class="${cls(r.ccy_y1)}">${sg(r.ccy_y1, 1)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`)) : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
+  const GR = M.global_rates || [];
+  $('grates').innerHTML = GR.length ? table(['Economy', 'Policy rate', 'Change, 1y', '10-year yield', 'Real policy rate', 'Curve (10y − policy)', 'Source', 'Date'],
+    GR.map((r) => `<tr><td>${esc(r.name)}</td><td>${ok(r.policy) ? num(r.policy, 2) + '%' : '—'}</td><td class="${cls(r.policy_y1, false)}">${sg(r.policy_y1, 2, ' pp')}</td><td>${ok(r.long) ? num(r.long, 2) + '%' : '—'}</td><td class="${cls(r.real)}">${sg(r.real, 2, '%')}</td><td class="${cls(r.curve)}">${sg(r.curve, 2, ' pp')}</td><td class="na">${esc(r.policy_src || 'OECD')}</td><td class="na">${esc(String(r.date || '').slice(0, 7))}</td></tr>`))
+    : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
   $('rates').innerHTML = (M.rates || []).length ? table(['Rate', 'Latest %', '1 month', '1 year', '12 months', 'Date'], M.rates.map((r) => mrow(r, 1))) : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
   $('usfiscal').innerHTML = (M.us_fiscal || []).map((r) => `<h3>${esc(r.name)}</h3><div class="score" style="font-size:44px">${usd(r.latest)}</div><p class="mono small">${esc(r.date)} · ${ok(r.y1_abs) ? usd(r.y1_abs) + ' IN 12 MONTHS (' + sg(r.y1, 1) + ')' : ''}</p>`).join('');
 

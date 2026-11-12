@@ -1,75 +1,50 @@
 # World Economy Live
 
-The world economy in plain English. A free, open site that pulls public data every day,
-scores major economies, and shows what changed: jobs, prices, factory output, trade,
-shipping chokepoints, commodity prices, people and health.
+The world economy's vital signs, in plain English. A free, open site that pulls public data
+every day and shows growth, jobs, inflation, trade, shipping chokepoints, commodity prices,
+currencies, interest rates, government debt and deficits, people and health, with a live
+world map and a 0–100 score for each major economy.
 
-## Deploy (free, about 10 minutes)
+## How it runs
 
-1. Create a GitHub account (use a fresh one with no personal details if you want to stay anonymous).
-2. New repository → name it `worldeconomylive.github.io` → **Public** → Create.
-3. Upload every file in this folder (drag the contents into "uploading an existing file"), keeping the folder structure, including `.github/workflows/update.yml`.
-4. Settings → Pages → Source: **GitHub Actions**.
-5. Actions tab → enable workflows if asked → "Daily update" → **Run workflow**.
-6. After ~10–20 minutes the site is live at `https://worldeconomylive.github.io`.
+A free GitHub Actions job (`.github/workflows/update.yml`) runs `pipeline/run.py` every day at
+07:17 UTC, writes `site/data/heartbeat.json`, commits it, and republishes the site on GitHub Pages.
+Any push that changes `pipeline/` or `site/` also triggers a run.
 
-It then refreshes itself every day at 07:17 UTC. Every run commits the data, which also keeps
-GitHub's scheduler active.
+## Sources (all open and republishable, with attribution)
 
-## What it tracks
+| Data | Source |
+|---|---|
+| Inflation, unemployment, factory output, GDP, interest rates, merchandise trade in US$ (45 economies) | OECD Data Explorer (CC BY 4.0) |
+| Euro-area fallbacks | Eurostat (via DBnomics) |
+| Central bank policy rates | Bank for International Settlements |
+| Debt, deficits, current account (incl. current-year estimates) | IMF World Economic Outlook (via DBnomics) |
+| People, health, GDP composition, trade in US$ | World Bank WDI (CC BY 4.0) |
+| Commodity prices | World Bank Commodity Price Data, "Pink Sheet" (CC BY 4.0) |
+| Exchange rates | European Central Bank reference rates |
+| US Treasury yields, real yields, federal debt | U.S. Department of the Treasury |
+| Effective fed funds rate | Federal Reserve Bank of New York |
+| Ports and chokepoints | IMF PortWatch |
 
-- **9 economies** (US, China, Japan, Germany, UK, France, Italy, Canada, India): GDP growth, inflation,
-  unemployment, factory output, central bank rate, 10-year bond yield, plus a 0–100 score.
-- **Markets**: 11 currencies, 9 US rates and spreads, 5 equity indices (% changes only), 22 commodities.
-- **Trade**: ~60 ports by region and product, 24 shipping chokepoints (IMF PortWatch).
-- **US fast signals**: jobless claims, rail, freight, consumer sentiment.
-- **People and health**: population, aging, births, life expectancy, health spending, migration,
-  income, inequality (World Bank).
+FRED is deliberately not used: its terms do not allow republishing or storing its data on a
+public site. Equity index levels (S&P, Nasdaq, Nikkei) are licensed by their owners and excluded.
 
-To add anything: put it in `pipeline/registry.py`. It flows through to the site.
+## Files
+
+| Part | File |
+|---|---|
+| What we track | `pipeline/registry.py` |
+| Data clients | `pipeline/sources.py` |
+| Pull, compute, score, write JSON | `pipeline/run.py` |
+| Website (static, D3 map, no build step) | `site/` |
+| Offline test with synthetic data | `python tests/mock_run.py` |
 
 ## Run locally
 
 ```
 pip install -r requirements.txt
-python pipeline/run.py                 # writes site/data/heartbeat.json
-python -m http.server -d site 8000     # open http://localhost:8000
-python tests/mock_run.py               # offline test with synthetic data
+python pipeline/run.py
+python -m http.server -d site 8000
 ```
 
-## How it is built
-
-| Part | File |
-|---|---|
-| What we track (economies, indicators, prices, regions) | `pipeline/registry.py` |
-| Data clients (FRED, DBnomics, World Bank, IMF PortWatch) | `pipeline/sources.py` |
-| Pull, score, write JSON | `pipeline/run.py` |
-| Website (no build step, no frameworks) | `site/` |
-| Daily automation | `.github/workflows/update.yml` |
-
-Every monthly indicator has a list of candidate sources tried in order; the first one with
-fresh data wins. A failed source never breaks the site. It is listed under
-"Data sources and status".
-
-## The score
-
-Up to four pillars per economy, each a z-score against that country's last 10 years,
-signed so higher = healthier: activity (factory output growth), jobs (12-month change in
-unemployment, inverted), prices (distance of inflation from 2%, inverted), trade (port cargo
-vs a year ago, scaled). Score = 50 + 15 × mean pillar, clipped to 0–100.
-
-## Data and licensing
-
-Public-domain and open-licensed sources only on the public site: IMF PortWatch, U.S. federal
-agencies via FRED, Eurostat / OECD / BIS via DBnomics, World Bank (CC BY 4.0). Some FRED series
-are owned by third parties (e.g. Cass, ATA). They are deliberately excluded. Check each
-series' notes before adding new ones.
-
 Not investment advice.
-
-## Roadmap
-
-- v2: ripple engine (OECD input-output tables) and "your wallet" household cost impact;
-  automated nowcasts; food and energy import vulnerability by country.
-- v3: electricity demand, satellite night lights and NO₂, conflict and attention signals,
-  alerts and a weekly note.

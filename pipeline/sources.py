@@ -5,6 +5,7 @@ OECD (CC BY 4.0), ECB, BIS, IMF (via DBnomics), Eurostat, World Bank (CC BY 4.0)
 US Treasury and NY Fed (US government), IMF PortWatch.
 """
 import io
+import json
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -21,32 +22,42 @@ S.headers.update({
 })
 STATUS: dict = {}          # key -> {"ok": bool, "note": str}
 DEAD_HOSTS: dict = {}      # circuit breaker: host -> consecutive connection failures
+MIN_GAP = {"sdmx.oecd.org": 4.0, "api.db.nomics.world": 0.4, "api.worldbank.org": 0.3, "stats.bis.org": 1.0}  # polite pacing (seconds)
+_LAST: dict = {}
 
 
 def log(key, ok, note=""):
     STATUS[key] = {"ok": bool(ok), "note": str(note)[:160]}
 
 
-def _get(url, timeout=45, tries=3, headers=None):
+def _get(url, timeout=60, tries=4, headers=None):
     host = url.split("/")[2]
-    if DEAD_HOSTS.get(host, 0) >= 4:
+    if DEAD_HOSTS.get(host, 0) >= 8:
         raise RuntimeError(f"{host} unreachable")
     last = None
     for i in range(tries):
+        gap = MIN_GAP.get(host, 0) - (time.time() - _LAST.get(host, 0))
+        if gap > 0:
+            time.sleep(gap)
+        _LAST[host] = time.time()
         try:
             r = S.get(url, timeout=timeout, headers=headers)
             if r.status_code == 200:
                 DEAD_HOSTS[host] = 0
                 return r
             last = f"HTTP {r.status_code}"
+            if r.status_code == 429:  # rate limited: wait and retry
+                wait = r.headers.get("Retry-After")
+                time.sleep(min(float(wait), 120) if wait and wait.isdigit() else 45 * (i + 1))
+                continue
             if r.status_code in (400, 401, 403, 404, 422):
                 break
         except Exception as e:
             last = type(e).__name__
             DEAD_HOSTS[host] = DEAD_HOSTS.get(host, 0) + 1
-            if DEAD_HOSTS[host] >= 4:
+            if DEAD_HOSTS[host] >= 8:
                 break
-        time.sleep(1.5 * (i + 1))
+        time.sleep(2 * (i + 1))
     raise RuntimeError(last or "failed")
 
 
@@ -95,12 +106,18 @@ def oecd_dims(flow):
     return _DIMS[flow]
 
 
+_FRAMES: dict = {}
+
+
 def oecd_frame(flow, key, start="2012-01"):
+    if (flow, key, start) in _FRAMES:
+        return _FRAMES[(flow, key, start)]
     r = _get(f"{OECD}/data/{flow}/{key}?startPeriod={start}&dimensionAtObservation=AllDimensions&format=csvfile",
              timeout=90)
     df = pd.read_csv(io.StringIO(r.text), dtype=str)
     if df.empty or "OBS_VALUE" not in df.columns:
         raise RuntimeError("empty")
+    _FRAMES[(flow, key, start)] = df
     return df
 
 
@@ -137,6 +154,64 @@ def oecd_pick(flow, filters, prefer=None, start="2012-01"):
     return s, attrs
 
 
+def _choose(df, prefer, dims):
+    prefer = dict(prefer or {})
+    strict = prefer.pop("_strict", [])
+    for col, wanted in prefer.items():
+        if col not in df.columns:
+            continue
+        sub = None
+        for w in wanted:
+            cand = df[df[col] == w]
+            if len(cand):
+                sub = cand
+                break
+        if sub is not None:
+            df = sub
+        elif col in strict:
+            return None
+    sk = [c for c in dims if c in df.columns and c not in ("TIME_PERIOD", "REF_AREA")]
+    if sk and len(df):
+        first = df.groupby(sk, dropna=False).size().sort_values(ascending=False).index[0]
+        first = first if isinstance(first, tuple) else (first,)
+        for c, v in zip(sk, first):
+            df = df[df[c] == v]
+    return df if len(df) else None
+
+
+def oecd_batch(spec, areas, start="2012-01"):
+    """One request for all economies. Returns {iso3: (series, attrs)}."""
+    flow = spec["flow"]
+    variants = spec.get("filters_alt") or [spec.get("filters", {})]
+    df, dims, last = None, None, None
+    for filt in variants:
+        try:
+            if "key" in spec:
+                key, dims = spec["key"].format(areas="+".join(areas)), []
+            else:
+                dims = oecd_dims(flow)
+                f = dict(filt, REF_AREA="+".join(areas))
+                key = ".".join(f.get(d, "") for d in dims)
+            df = oecd_frame(flow, key, start)
+            break
+        except Exception as e:
+            last = e
+    if df is None:
+        raise RuntimeError(str(last)[:60])
+    dims = dims or [c for c in df.columns if c not in ("OBS_VALUE", "TIME_PERIOD")]
+    out = {}
+    for area, g in df.groupby("REF_AREA"):
+        g = _choose(g, spec.get("prefer"), dims)
+        if g is None:
+            continue
+        try:
+            s = _series(g["OBS_VALUE"], g["TIME_PERIOD"].map(_period_to_ts), area)
+        except RuntimeError:
+            continue
+        out[area] = (s, {c: g[c].iloc[0] for c in g.columns if c not in ("OBS_VALUE", "TIME_PERIOD")})
+    return out
+
+
 # ---------------- DBnomics (IMF WEO, Eurostat, BIS mirrors) ----------------
 def dbnomics(series_id: str) -> pd.Series:
     r = _get(f"https://api.db.nomics.world/v22/series/{series_id}?observations=1&format=json")
@@ -148,7 +223,51 @@ def dbnomics(series_id: str) -> pd.Series:
     return _series(vals, [_period_to_ts(p) for p in d["period"]], series_id)
 
 
+def weo_all(code, releases):
+    """All countries for one WEO subject.unit. Returns ({iso3: series}, release_used)."""
+    subj, unit = code.split(".")
+    dims = json.dumps({"weo-subject": [subj], "unit": [unit]})
+    for rel in releases:
+        try:
+            url = (f"https://api.db.nomics.world/v22/series/IMF/{rel}?dimensions={requests.utils.quote(dims)}"
+                   f"&observations=1&limit=1000&format=json")
+            docs = _get(url, timeout=90).json().get("series", {}).get("docs", [])
+            out = {}
+            for d in docs:
+                iso = d.get("series_code", "").split(".")[0]
+                try:
+                    out[iso] = _series([None if v == "NA" else v for v in d["value"]],
+                                       [_period_to_ts(p) for p in d["period"]], iso)
+                except RuntimeError:
+                    pass
+            if out:
+                return out, rel
+        except Exception:
+            continue
+    raise RuntimeError("WEO unavailable")
+
+
 # ---------------- BIS (central bank policy rates) ----------------
+def bis_batch(codes):
+    key = "+".join(sorted(set(codes)))
+    for url in (f"https://stats.bis.org/api/v1/data/WS_CBPOL/M.{key}/all?detail=dataonly&format=csv",
+                f"https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.{key}?format=csv"):
+        try:
+            df = pd.read_csv(io.StringIO(_get(url, timeout=90).text), dtype=str)
+            area = "REF_AREA" if "REF_AREA" in df.columns else next(c for c in df.columns if "AREA" in c.upper())
+            tcol = "TIME_PERIOD" if "TIME_PERIOD" in df.columns else df.columns[-2]
+            out = {}
+            for a, g in df.groupby(area):
+                try:
+                    out[a] = _series(g["OBS_VALUE"], g[tcol].map(_period_to_ts), a)
+                except RuntimeError:
+                    pass
+            if out:
+                return out
+        except Exception:
+            continue
+    raise RuntimeError("BIS unavailable")
+
 def bis_policy_rate(cc: str) -> pd.Series:
     for url in (f"https://stats.bis.org/api/v1/data/WS_CBPOL/M.{cc}/all?detail=dataonly&format=csv",
                 f"https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.{cc}?format=csv"):
@@ -162,10 +281,24 @@ def bis_policy_rate(cc: str) -> pd.Series:
 
 
 # ---------------- World Bank (annual, CC BY 4.0) ----------------
+def worldbank_all(indicator: str, since=2005) -> pd.DataFrame:
+    """Every country for one indicator (one request). Columns: iso3, year, value."""
+    url = (f"https://api.worldbank.org/v2/country/all/indicator/{indicator}"
+           f"?format=json&per_page=20000&date={since}:{datetime.utcnow().year}")
+    j = _get(url, timeout=150).json()
+    if not isinstance(j, list) or len(j) < 2 or j[1] is None:
+        raise RuntimeError("no data")
+    rows = [{"iso3": x["countryiso3code"], "year": int(x["date"]), "value": x["value"]}
+            for x in j[1] if x.get("value") is not None and x.get("countryiso3code")]
+    if not rows:
+        raise RuntimeError("no data")
+    return pd.DataFrame(rows)
+
+
 def worldbank(indicator: str, iso3s: list) -> pd.DataFrame:
     url = (f"https://api.worldbank.org/v2/country/{';'.join(iso3s)}/indicator/{indicator}"
-           f"?format=json&per_page=20000&date=1990:{datetime.utcnow().year}")
-    j = _get(url).json()
+           f"?format=json&per_page=20000&date=1995:{datetime.utcnow().year}")
+    j = _get(url, timeout=120).json()
     if not isinstance(j, list) or len(j) < 2 or j[1] is None:
         raise RuntimeError("no data")
     rows = [{"iso3": x["countryiso3code"], "year": int(x["date"]), "value": x["value"]}
