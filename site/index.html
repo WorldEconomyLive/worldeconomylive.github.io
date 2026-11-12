@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>World Economy Live — the world economy's vital signs</title>
+<meta name="description" content="A free, open, daily-updated pulse of the world economy: jobs, prices, trade, shipping, people and health, from public data.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">World Economy <span>Live</span></div>
+    <div class="tag">The world economy's vital signs, in plain English. Updated daily from public data.</div>
+  </header>
+  <div id="banner"></div>
+
+  <section class="hero" id="hero"></section>
+
+  <h2>What changed</h2>
+  <p class="sub">The biggest moves in the latest data.</p>
+  <ul class="drivers" id="drivers"></ul>
+
+  <h2>Economies</h2>
+  <p class="sub">Score 0–100. 50 is normal for that country. Tap one for details.</p>
+  <div class="grid" id="econ"></div>
+  <div id="detail"></div>
+
+  <h2>Global trade by region and product</h2>
+  <p class="sub" id="tradesub">Cargo through each region's busiest ports vs the same 28 days last year.</p>
+  <div class="scroll" id="heat"></div>
+
+  <h2>Shipping chokepoints</h2>
+  <p class="sub">Ships passing through the world's key straits and canals vs a year ago.</p>
+  <div class="bars" id="choke"></div>
+
+  <h2>Prices</h2>
+  <p class="sub">What things cost vs a year ago, next to how much of them is moving by sea.</p>
+  <div class="legend"><span><i class="sw" style="background:#eb6834"></i>Price</span><span><i class="sw" style="background:#888780"></i>Volume shipped (matching ship type)</span></div>
+  <div class="bars" id="prices"></div>
+
+  <h2>Markets</h2>
+  <p class="sub">Currencies, interest rates, stock indices and commodities. Rates show change in percentage points (pp).</p>
+  <div id="markets"></div>
+
+  <h2>US fast signals</h2>
+  <p class="sub">Weekly and monthly indicators that move before GDP.</p>
+  <div class="scroll" id="usfast"></div>
+
+  <h2>People and health</h2>
+  <p class="sub">The slow-moving foundations of each economy (World Bank, latest year).</p>
+  <div class="scroll" id="vitals"></div>
+
+  <h2>How this works</h2>
+  <details><summary>The score</summary>
+    <p>Each economy gets up to four pillars: <b>activity</b> (factory output growth), <b>jobs</b> (change in unemployment over 12 months, inverted), <b>prices</b> (distance of inflation from 2%, inverted) and <b>trade</b> (port cargo vs a year ago). Each pillar is compared with that country's own last 10 years as a z-score, so +1 means one standard deviation healthier than usual. The score is 50 + 15 × the average pillar, capped at 0–100.</p>
+    <p>60+ Strong · 45–60 Steady · 35–45 Soft · under 35 Stressed. It is a summary, not a forecast. Always check the parts behind it.</p>
+  </details>
+  <details><summary>Data sources and status</summary><div id="status" class="status"></div>
+    <p>IMF PortWatch (port and chokepoint data), FRED / U.S. agencies (FX, rates, prices), index owners (S&amp;P, Nasdaq, Nikkei; % changes shown), Eurostat, OECD and BIS via DBnomics, World Bank. Port data lags: the latest 10 days are excluded.</p>
+  </details>
+
+  <footer>Open source. Public data only. Not investment advice. <span id="gen"></span></footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

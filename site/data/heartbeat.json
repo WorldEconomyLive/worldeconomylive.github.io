@@ -1,0 +1,322 @@
+{
+ "generated_at": "2026-11-11 (preview)",
+ "seed": true,
+ "seed_note": "Preview: trade and price figures are real (local run on Nov 11, window Sep 30 to Oct 27). Economy scores, people and health, and chokepoints fill in on the first automated daily run.",
+ "world": {
+  "score": null,
+  "label": "Pending",
+  "headline": "Supply shock: goods are moving less while prices rise."
+ },
+ "drivers": [
+  "Middle East port cargo is down 70% from a year ago, as Strait of Hormuz disruption cuts Gulf traffic.",
+  "South Asia port cargo is up 50%, as Indian ports take on rerouted Gulf cargo.",
+  "Asia LNG is up 136% from a year ago while US natural gas is down 32%.",
+  "Brent crude is up 68% from a year ago while tanker cargo is down 10%.",
+  "Wheat is up 59% from a year ago while ore, coal and grain shipments are down 18%."
+ ],
+ "economies": [
+  {
+   "name": "United States",
+   "iso3": "USA",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": [],
+   "trade_yoy": 7.6
+  },
+  {
+   "name": "China",
+   "iso3": "CHN",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": []
+  },
+  {
+   "name": "Japan",
+   "iso3": "JPN",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": []
+  },
+  {
+   "name": "Germany",
+   "iso3": "DEU",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": []
+  },
+  {
+   "name": "United Kingdom",
+   "iso3": "GBR",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": []
+  },
+  {
+   "name": "France",
+   "iso3": "FRA",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": []
+  },
+  {
+   "name": "Italy",
+   "iso3": "ITA",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": []
+  },
+  {
+   "name": "Canada",
+   "iso3": "CAN",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": []
+  },
+  {
+   "name": "India",
+   "iso3": "IND",
+   "indicators": {},
+   "pillars": {},
+   "score": null,
+   "label": "Pending",
+   "coverage": "0/4 pillars",
+   "vitals": {},
+   "history": []
+  }
+ ],
+ "prices": [
+  {
+   "name": "Brent crude",
+   "ship": "tanker",
+   "yoy": 68.0,
+   "date": "2026-11-01"
+  },
+  {
+   "name": "WTI crude",
+   "ship": "tanker",
+   "yoy": 66.2,
+   "date": "2026-11-01"
+  },
+  {
+   "name": "US natural gas",
+   "ship": "tanker",
+   "yoy": -31.9,
+   "date": "2026-11-01"
+  },
+  {
+   "name": "Asia LNG",
+   "ship": "tanker",
+   "yoy": 136.2,
+   "date": "2026-09-01"
+  },
+  {
+   "name": "Iron ore",
+   "ship": "dry_bulk",
+   "yoy": -5.6,
+   "date": "2026-09-01"
+  },
+  {
+   "name": "Coal",
+   "ship": "dry_bulk",
+   "yoy": 36.7,
+   "date": "2026-09-01"
+  },
+  {
+   "name": "Wheat",
+   "ship": "dry_bulk",
+   "yoy": 59.1,
+   "date": "2026-09-01"
+  },
+  {
+   "name": "Soybeans",
+   "ship": "dry_bulk",
+   "yoy": 30.7,
+   "date": "2026-09-01"
+  },
+  {
+   "name": "Copper",
+   "ship": "dry_bulk",
+   "yoy": 44.8,
+   "date": "2026-09-01"
+  },
+  {
+   "name": "US import prices",
+   "ship": "container",
+   "yoy": 8.1,
+   "date": "2026-09-01"
+  },
+  {
+   "name": "Ocean freight cost",
+   "ship": null,
+   "yoy": 36.8,
+   "date": "2026-09-01"
+  },
+  {
+   "name": "Truckload cost",
+   "ship": null,
+   "yoy": 17.9,
+   "date": "2026-09-01"
+  }
+ ],
+ "us_fast": [
+  {
+   "name": "Rail carloads",
+   "yoy": 2.3,
+   "date": "2026-08-01",
+   "latest": 990805
+  },
+  {
+   "name": "Rail intermodal",
+   "yoy": 4.9,
+   "date": "2026-08-01",
+   "latest": 1314324
+  },
+  {
+   "name": "Freight services index",
+   "yoy": -3.0,
+   "date": "2026-08-01",
+   "latest": 134.4
+  }
+ ],
+ "trade": {
+  "window": [
+   "2026-09-30",
+   "2026-10-27"
+  ],
+  "regions": [
+   {
+    "region": "Middle East",
+    "tanker": -53.1,
+    "container": -86.7,
+    "dry_bulk": -46.9,
+    "general_cargo": -64.1,
+    "roro": -87.7,
+    "total": -70.4
+   },
+   {
+    "region": "LatAm",
+    "tanker": -20.2,
+    "container": -8.2,
+    "dry_bulk": -22.9,
+    "general_cargo": 1.6,
+    "roro": -0.6,
+    "total": -14.4
+   },
+   {
+    "region": "China",
+    "tanker": -33.5,
+    "container": 7.8,
+    "dry_bulk": -27.9,
+    "general_cargo": -32.4,
+    "roro": -9.9,
+    "total": -6.3
+   },
+   {
+    "region": "SE Asia",
+    "tanker": -8.6,
+    "container": -5.7,
+    "dry_bulk": 3.9,
+    "general_cargo": -12.8,
+    "roro": 2.7,
+    "total": -6.3
+   },
+   {
+    "region": "NE Asia",
+    "tanker": -9.0,
+    "container": 8.0,
+    "dry_bulk": -20.4,
+    "general_cargo": -1.4,
+    "roro": 14.5,
+    "total": -1.8
+   },
+   {
+    "region": "Africa",
+    "tanker": 13.6,
+    "container": 12.7,
+    "dry_bulk": -31.2,
+    "general_cargo": -2.3,
+    "roro": -3.6,
+    "total": 0.6
+   },
+   {
+    "region": "Europe",
+    "tanker": 1.1,
+    "container": 12.0,
+    "dry_bulk": -10.7,
+    "general_cargo": -2.5,
+    "roro": -12.6,
+    "total": 4.3
+   },
+   {
+    "region": "US",
+    "tanker": 8.3,
+    "container": 14.4,
+    "dry_bulk": -5.0,
+    "general_cargo": -0.3,
+    "roro": -8.7,
+    "total": 7.6
+   },
+   {
+    "region": "South Asia",
+    "tanker": 99.7,
+    "container": 20.7,
+    "dry_bulk": 79.3,
+    "general_cargo": 129.5,
+    "roro": 161.3,
+    "total": 50.1
+   }
+  ],
+  "global": {
+   "tanker": -10.1,
+   "container": -0.5,
+   "dry_bulk": -18.2,
+   "general_cargo": -10.7,
+   "roro": -12.8,
+   "total": -6.3
+  },
+  "chokepoints": [],
+  "economies": {
+   "USA": 7.6
+  }
+ },
+ "products": {
+  "tanker": "Oil, fuel, gas, chemicals",
+  "container": "Manufactured goods",
+  "dry_bulk": "Ores, coal, grain",
+  "general_cargo": "Steel, project cargo",
+  "roro": "Vehicles"
+ },
+ "status": {}
+}
