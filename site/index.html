@@ -31,7 +31,7 @@
     <p class="mono small" id="coverage"></p>
   </div>
   <div class="layers" id="layers">
-    <button data-l="score" class="on">Score</button><button data-l="gdp">Growth</button><button data-l="inflation">Inflation</button><button data-l="unemployment">Jobless</button><button data-l="debt">Debt</button><button data-l="ca">Current acct</button><button data-l="power">Power</button><button data-l="trade">Port trade</button>
+    <button data-l="score" class="on">Score</button><button data-l="gdp">Growth</button><button data-l="inflation">Inflation</button><button data-l="unemployment">Jobless</button><button data-l="debt">Debt</button><button data-l="ca">Current acct</button><button data-l="tb">Trade bal.</button><button data-l="power">Power</button><button data-l="trade">Port trade</button>
   </div>
   <div class="legend mono" id="legend"></div>
   <div class="tip mono" id="tip"></div>
@@ -55,8 +55,9 @@
 
   <section id="scorecard">
     <h2><span>03</span>Macro scorecard</h2>
-    <p class="sub">The headline numbers and the classic formulas, side by side.</p>
-    <div class="tbl" id="scorecard"></div>
+    <p class="sub">The headline numbers and the classic formulas, side by side. Tap a country to chart any column over the last 10 years.</p>
+    <div class="tbl" id="scoretbl"></div>
+    <div id="schart"></div>
   </section>
 
   <section id="fundamentals">

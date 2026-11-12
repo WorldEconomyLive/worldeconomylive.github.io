@@ -226,6 +226,48 @@ def macro_block():
     return out
 
 
+def history_series(e, months=120):
+    """Monthly history (last 10 years) of every scorecard column, for the click-to-chart view."""
+    S_ = e.get("_series", {})
+    m = lambda k: None if S_.get(k) is None else S_[k].resample("MS").mean()  # noqa: E731
+    pi, u, i, lr, X, M = (m(k) for k in ("inflation", "unemployment", "policy_rate", "long_rate", "exports_usd", "imports_usd"))
+    g = S_.get("gdp")
+    out = {}
+    if g is not None:
+        out["gdp"] = g
+    for k, v in (("inflation", pi), ("unemployment", u), ("policy_rate", i), ("long_rate", lr)):
+        if v is not None:
+            out[k] = v
+    if i is not None and pi is not None:
+        i_ff = i.reindex(pi.index).ffill()
+        out["real_rate"] = i_ff - pi
+    if pi is not None and u is not None:
+        out["misery"] = pi + u.reindex(pi.index).ffill()
+    if lr is not None and i is not None:
+        out["curve"] = lr - i.reindex(lr.index).ffill()
+    if u is not None and pi is not None:
+        uu = u.dropna()
+        ubar = uu.rolling(120, min_periods=36).mean()
+        gap = -2.0 * (uu - ubar)
+        p_ = pi.reindex(gap.index).ffill()
+        taylor = 0.5 + p_ + 0.5 * (p_ - 2.0) + 0.5 * gap
+        if i is not None:
+            out["taylor_gap"] = (i.reindex(taylor.index).ffill() - taylor)
+        a3 = uu.rolling(3).mean()
+        out["sahm"] = a3 - a3.rolling(13).min()
+    if X is not None and M is not None:
+        b = (X - M).dropna()
+        out["trade_balance"] = b
+        out["trade_balance_12m"] = b.rolling(12).sum()
+    res = {}
+    for k, v in out.items():
+        v = v.dropna()
+        v = v[v.index >= v.index.max() - pd.DateOffset(months=months)] if len(v) else v
+        if len(v) >= 3:
+            res[k] = [[d.strftime("%Y-%m"), round(float(x), 3)] for d, x in v.items()]
+    return res
+
+
 def macro_math(e):
     I, m, series = e["indicators"], {}, e["_series"]
     g = lambda k: I[k]["latest"] if k in I and not I[k].get("annual") else None  # noqa: E731
@@ -261,6 +303,7 @@ def real_rate_any(e):
 
 
 # ---------------------------------------------------------------- annual (all countries)
+SERIES_OUT: dict = {}    # iso3 -> {column: [[YYYY-MM, value], ...]} written to site/data/series.json
 ANNUAL_HIST: dict = {}   # iso3 -> {gdp_growth|inflation_a|unemployment_a: annual series}
 
 
@@ -660,12 +703,13 @@ def transport_block():
 def freight_block():
     """Rail and air freight outside the US: EU air (monthly), EU rail (quarterly), Canada rail (monthly).
     Returns {"rows": [...table rows...], "z": {iso3: z of freight volume growth vs own history}}."""
-    rows, zs = [], {}
+    rows, zs, skipped = [], {}, []
 
     def add(iso3, mode, s, unit, quarterly=False):
         s = s.dropna().sort_index()
         s = s[~s.index.duplicated()]
         if len(s) < (12 if quarterly else 27) or age_months(s) > (12 if quarterly else 8):
+            skipped.append(f"{iso3} {mode}: {len(s)} obs, latest {str(s.index[-1])[:7] if len(s) else 'none'}")
             return
         if quarterly:
             y = ((s / s.shift(4) - 1) * 100).dropna()
@@ -688,9 +732,14 @@ def freight_block():
                                     ("eurostat.rail_freight", S.eu_rail_freight, "Rail freight", "thousand tonnes", True)):
         try:
             data = fn()
+            n0 = len(rows)
             for iso3, ser in data.items():
                 add(iso3, mode, ser, unit, q)
-            S.log(name, True, f"{len(data)} countries")
+            kept = len(rows) - n0
+            note = f"{kept}/{len(data)} countries current"
+            if kept < len(data):
+                note += " · skipped e.g. " + "; ".join([x for x in skipped if mode in x][:2])
+            S.log(name, kept > 0, note)
         except Exception as ex:
             S.log(name, False, ex)
     try:
@@ -802,6 +851,10 @@ def main():
         e["fundamentals"] = {x: v for x, v in f.items() if x not in R.VITAL_KEYS}
         e["math"] = macro_math(e)
         e["derived"] = derive(e, e["fundamentals"])
+        SERIES_OUT[k] = history_series(e)
+        tb = SERIES_OUT[k].get("trade_balance_12m")
+        if tb:
+            e.setdefault("trade_m", {})["balance_12m"] = tb[-1][1]
         e.pop("_series", None)
     hist = save_history(econ)
     for k in econ:
@@ -840,7 +893,7 @@ def main():
         if not c:
             continue
         f, row = annual.get(iso3, {}), {"iso3": iso3, "name": c.name}
-        for k in ("gdp_growth", "inflation_a", "unemployment_a", "gov_debt", "current_account", "gdp_usd", "population"):
+        for k in ("gdp_growth", "inflation_a", "unemployment_a", "gov_debt", "current_account", "gdp_usd", "population", "net_exports"):
             if k in f:
                 row[k] = f[k]["value"]
         if iso3 not in econ:
@@ -881,6 +934,10 @@ def main():
     step("writing output")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(clean(data), separators=(",", ":")))
+    for k, e in econ.items():                       # score history joins the chart series
+        if e.get("history"):
+            SERIES_OUT.setdefault(k, {})["score"] = [[d, round(v, 1)] for d, v in e["history"] if v is not None]
+    (OUT.parent / "series.json").write_text(json.dumps(clean(SERIES_OUT), separators=(",", ":")))
     ok = sum(v["ok"] for v in S.STATUS.values())
     print(f"Wrote {OUT} | sources ok {ok}/{len(S.STATUS)} | world score {world} | map countries {len(map_rows)}")
     for k, v in S.STATUS.items():

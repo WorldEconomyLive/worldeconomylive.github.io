@@ -23,7 +23,7 @@ S.headers.update({
 })
 STATUS: dict = {}          # key -> {"ok": bool, "note": str}
 DEAD_HOSTS: dict = {}      # circuit breaker: host -> consecutive connection failures
-MIN_GAP = {"sdmx.oecd.org": 4.0, "api.db.nomics.world": 0.4, "api.worldbank.org": 0.3, "stats.bis.org": 1.0}  # polite pacing (seconds)
+MIN_GAP = {"ec.europa.eu": 0.5, "sdmx.oecd.org": 4.0, "api.db.nomics.world": 0.4, "api.worldbank.org": 0.3, "stats.bis.org": 1.0}  # polite pacing (seconds)
 _LAST: dict = {}
 import threading
 _LOCK = threading.Lock()
@@ -548,8 +548,42 @@ def _geo_iso3(code):
         return None
 
 
-def eurostat_by_country(dataset, dims):
-    """{iso3: series} for a Eurostat dataset via DBnomics; aggregates (EU27 etc.) dropped."""
+def eurostat_jsonstat(dataset, dims, since):
+    """Eurostat's own dissemination API (JSON-stat 2.0), always current. Returns {iso3: series}."""
+    q = "&".join(f"{k}={v[0]}" for k, v in dims.items()) + f"&sinceTimePeriod={since}&lang=EN"
+    js = _get(f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset}?{q}", timeout=120).json()
+    ids, size, vals = js["id"], js["size"], js.get("value", {})
+    idx = {d: js["dimension"][d]["category"]["index"] for d in ids}
+    pos = {d: {i: c for c, i in idx[d].items()} if isinstance(idx[d], dict) else dict(enumerate(idx[d])) for d in ids}
+    gi, ti = ids.index("geo"), ids.index("time")
+    out = {}
+    for k, v in (vals.items() if isinstance(vals, dict) else enumerate(vals)):
+        if v is None:
+            continue
+        k, coord = int(k), []
+        for n in reversed(size):
+            coord.append(k % n)
+            k //= n
+        coord = coord[::-1]
+        if any(c != 0 for j, c in enumerate(coord) if j not in (gi, ti)):
+            continue
+        out.setdefault(pos["geo"][coord[gi]], {})[_period_to_ts(pos["time"][coord[ti]])] = float(v)
+    res = {}
+    for geo, obs in out.items():
+        iso = _geo_iso3(geo)
+        if iso:
+            res[iso] = pd.Series(obs).sort_index().rename(iso).set_axis(pd.to_datetime(sorted(obs)))
+    if not res:
+        raise RuntimeError(f"{dataset}: empty")
+    return res
+
+
+def eurostat_by_country(dataset, dims, since="2014-01"):
+    """{iso3: series}: Eurostat API first (current), DBnomics mirror as fallback."""
+    try:
+        return eurostat_jsonstat(dataset, dims, since)
+    except Exception:
+        pass
     res = {}
     for code, (s, d) in dbnomics_dims("Eurostat", dataset, dims).items():
         iso = _geo_iso3(d.get("geo") or code.split(".")[-1])
@@ -568,7 +602,7 @@ def eu_air_freight():
 
 def eu_rail_freight():
     """Quarterly goods transported by rail, thousand tonnes (Eurostat rail_go_quartal)."""
-    return eurostat_by_country("rail_go_quartal", {"freq": ["Q"], "unit": ["THS_T"]})
+    return eurostat_by_country("rail_go_quartal", {"freq": ["Q"], "unit": ["THS_T"]}, since="2012-Q1")
 
 
 def canada_rail():

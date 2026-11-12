@@ -29,6 +29,8 @@
     const w = (Math.min(Math.abs(v), cap) / cap) * 50, l = v < 0 ? 50 - w : 50, pos = v < 0 ? `right:${50 + w + 1}%` : `left:${50 + w + 1}%`;
     return `<div class="trk"><div class="ax"></div><div class="bar-f" style="left:${l}%;width:${w}%;background:${color}"></div><span class="val" style="${pos}">${sg(v, 0)}${Math.abs(v) > cap ? '›' : ''}</span></div>`;
   }
+  const bn = (v) => !ok(v) ? '—' : (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(1) + 'bn';
+  const sd = (v) => ok(v) ? `<span class="sd">${v >= 0 ? 'surplus' : 'deficit'}</span>` : '';
   const table = (head, rows) => `<table><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
 
   let D;
@@ -53,6 +55,7 @@
     gdp: { get: (r) => r.gdp, color: (v) => div(v, 6), legend: ['−6%', '0', '+6%'], ramp: [div(-6, 6), div(0, 6), div(6, 6)] },
     debt: { get: (r) => r.gov_debt, color: (v) => seq(v, 0, 150, NEG), legend: ['0%', '', '150%+ of GDP'], ramp: [seq(0, 0, 150, NEG), seq(150, 0, 150, NEG)] },
     ca: { get: (r) => r.current_account, color: (v) => div(v, 8), legend: ['Deficit', '0', 'Surplus'], ramp: [div(-8, 8), div(0, 8), div(8, 8)] },
+    tb: { get: (r) => r.net_exports, color: (v) => div(v, 10), legend: ['Deficit', '0', 'Surplus'], ramp: [div(-10, 10), div(0, 10), div(10, 10)], fmt: (v) => (v >= 0 ? 'Trade surplus ' : 'Trade deficit ') + num(Math.abs(v), 1) + '% of GDP' },
     power: { get: (r) => r.power, color: (v) => div(v, 8), legend: ['−8%', '0', '+8% power use'], ramp: [div(-8, 8), div(0, 8), div(8, 8)] },
     inflation: { get: (r) => r.inflation, color: (v) => seq(v, 0, 8, NEG), legend: ['0%', '', '8%+'], ramp: [seq(0, 0, 8, NEG), seq(8, 0, 8, NEG)], fmt: (v) => num(v) + '% a year' },
     unemployment: { get: (r) => r.unemployment, color: (v) => seq(v, 2, 10, NEG), legend: ['2%', '', '10%+'], ramp: [seq(2, 2, 10, NEG), seq(10, 2, 10, NEG)], fmt: (v) => num(v) + '% jobless' },
@@ -84,7 +87,7 @@
         const r = D.map?.[String(+d.id)], L = LAYERS[layer];
         let h = `<b>${esc(r?.name || d.properties.name)}</b>`;
         if (r) { if (ok(r.score)) h += `<br>Score ${num(r.score, 0)} · ${esc(r.label)}`; if (ok(r.gdp)) h += `<br>GDP growth ${sg(r.gdp)}`; if (ok(r.inflation)) h += `<br>Inflation ${num(r.inflation)}%`; if (ok(r.unemployment)) h += `<br>Unemployment ${num(r.unemployment)}%`;
-          if (ok(r.gov_debt)) h += `<br>Gov. debt ${num(r.gov_debt, 0)}% of GDP`; if (ok(r.current_account)) h += `<br>Current account ${sg(r.current_account)} of GDP`; if (ok(r.gdp_usd)) h += `<br>GDP ${usd(r.gdp_usd)}`; if (ok(r.trade)) h += `<br>Port cargo ${sg(r.trade, 0)} y/y`; if (ok(r.power)) h += `<br>Power use ${sg(r.power, 1)} y/y`;
+          if (ok(r.gov_debt)) h += `<br>Gov. debt ${num(r.gov_debt, 0)}% of GDP`; if (ok(r.current_account)) h += `<br>Current account ${sg(r.current_account)} of GDP`; if (ok(r.gdp_usd)) h += `<br>GDP ${usd(r.gdp_usd)}`; if (ok(r.net_exports)) h += `<br>Trade ${r.net_exports >= 0 ? 'surplus' : 'deficit'} ${num(Math.abs(r.net_exports), 1)}% of GDP`; if (ok(r.trade)) h += `<br>Port cargo ${sg(r.trade, 0)} y/y`; if (ok(r.power)) h += `<br>Power use ${sg(r.power, 1)} y/y`;
           if (!r.tracked) h += `<br><span style="color:#5f646d">${r.basis === 'annual' ? 'score from IMF annual estimates' + (ok(r.trade) || ok(r.power) ? ' + live port/power data' : '') : 'annual data (IMF/World Bank)'}</span>`; }
         else h += '<br><span style="color:#5f646d">not tracked yet</span>';
         showTip(ev, h);
@@ -133,7 +136,7 @@
     unemployment: ['Unemployment', (x) => num(x.latest) + '%', 'of workers'], industry: ['Factory output', (x) => sg(x.latest), 'vs a year ago'],
     policy_rate: ['Central bank rate', (x) => num(x.latest, 2) + '%', ''], long_rate: ['10-year bond yield', (x) => num(x.latest, 2) + '%', ''],
     exports_usd: ['Goods exports (month)', (x) => usd(x.latest * 1e9), ''], imports_usd: ['Goods imports (month)', (x) => usd(x.latest * 1e9), ''],
-    trade_balance_usd: ['Goods trade balance (month)', (x) => usd(x.latest * 1e9), ''],
+    trade_balance_usd: ['Goods trade balance (month)', (x) => usd(Math.abs(x.latest) * 1e9) + (x.latest >= 0 ? ' surplus' : ' deficit'), ''],
   };
   function plain(e) {
     const I = e.indicators || {}, s = [];
@@ -170,10 +173,43 @@
 
   // ---------------- scorecard ----------------
   const I_ = (e, k) => e.indicators?.[k]?.latest;
-  $('scorecard').innerHTML = table(['Economy', 'Score', 'GDP', 'Inflation', 'Jobless', 'Policy rate', 'Real rate', 'Misery', 'Taylor gap', 'Sahm', '10y − policy'],
-    E.map((e) => `<tr><td>${esc(e.name)}</td><td>${ok(e.score) ? Math.round(e.score) : '—'}</td><td class="${cls(I_(e, 'gdp'))}">${sg(I_(e, 'gdp'))}</td><td>${num(I_(e, 'inflation'))}%</td><td>${num(I_(e, 'unemployment'))}%</td>
+  const COLS = [['score', 'Score', ''], ['gdp', 'GDP growth', '%'], ['inflation', 'Inflation', '%'], ['unemployment', 'Jobless', '%'], ['policy_rate', 'Policy rate', '%'],
+    ['real_rate', 'Real rate', '%'], ['misery', 'Misery', ''], ['taylor_gap', 'Taylor gap', 'pp'], ['sahm', 'Sahm', 'pp'], ['curve', '10y − policy', 'pp'], ['trade_balance_12m', 'Trade bal. 12m', '$bn']];
+  $('scoretbl').innerHTML = table(['Economy', 'Score', 'GDP', 'Inflation', 'Jobless', 'Policy rate', 'Real rate', 'Misery', 'Taylor gap', 'Sahm', '10y − policy', 'Trade bal. 12m'],
+    E.map((e) => `<tr data-iso="${esc(e.iso3)}"><td>${esc(e.name)}</td><td>${ok(e.score) ? Math.round(e.score) : '—'}</td><td class="${cls(I_(e, 'gdp'))}">${sg(I_(e, 'gdp'))}</td><td>${num(I_(e, 'inflation'))}%</td><td>${num(I_(e, 'unemployment'))}%</td>
       <td>${num(I_(e, 'policy_rate'), 2)}</td><td>${sg(e.math?.real_rate, 2, '')}</td><td>${num(e.math?.misery)}</td><td>${sg(e.math?.taylor_gap, 2, '')}</td>
-      <td class="${ok(e.math?.sahm) && e.math.sahm >= 0.5 ? 'neg' : ''}">${num(e.math?.sahm, 2)}</td><td class="${cls(e.math?.curve)}">${sg(e.math?.curve, 2, '')}</td></tr>`));
+      <td class="${ok(e.math?.sahm) && e.math.sahm >= 0.5 ? 'neg' : ''}">${num(e.math?.sahm, 2)}</td><td class="${cls(e.math?.curve)}">${sg(e.math?.curve, 2, '')}</td>
+      <td class="${cls(e.trade_m?.balance_12m)}">${ok(e.trade_m?.balance_12m) ? bn(Math.abs(e.trade_m.balance_12m)) + sd(e.trade_m.balance_12m) : '—'}</td></tr>`));
+  let SER = null, scIso = null, scCol = 'gdp';
+  async function showHist(iso) {
+    scIso = iso;
+    document.querySelectorAll('#scoretbl tbody tr').forEach((r) => r.classList.toggle('sel', r.dataset.iso === iso));
+    if (!SER) { try { SER = await (await fetch('data/series.json', { cache: 'no-store' })).json(); } catch (_) { SER = {}; } }
+    const e = E.find((x) => x.iso3 === iso), H = SER[iso] || {};
+    const avail = COLS.filter(([k]) => (H[k] || []).length >= 3);
+    if (!avail.find(([k]) => k === scCol) && avail.length) scCol = avail[0][0];
+    const box = $('schart');
+    box.innerHTML = `<div class="hchart"><h3>${esc(e?.name || iso)}</h3><div class="toggles">${avail.map(([k, n]) => `<button data-c="${k}" class="${k === scCol ? 'on' : ''}">${n}</button>`).join('') || '<span class="sub">No history yet for this economy.</span>'}</div><div id="hplot"></div><p class="sub small" id="hnote"></p></div>`;
+    box.querySelectorAll('.toggles button').forEach((b) => b.addEventListener('click', () => { scCol = b.dataset.c; showHist(scIso); }));
+    const pts = (H[scCol] || []).map(([d, v]) => [new Date(d.length === 7 ? d + '-01' : d), v]);
+    if (!pts.length) return;
+    const W = Math.min($('hplot').clientWidth || 800, 1100), Hh = 240, m = { l: 48, r: 14, t: 10, b: 24 };
+    const x = d3.scaleTime().domain(d3.extent(pts, (p) => p[0])).range([m.l, W - m.r]);
+    const ext = d3.extent(pts, (p) => p[1]), lo = Math.min(ext[0], 0), hi = Math.max(ext[1], 0), pad = (hi - lo) * 0.08 || 1;
+    const y = d3.scaleLinear().domain([lo - pad, hi + pad]).nice().range([Hh - m.b, m.t]);
+    const svg = d3.select('#hplot').append('svg').attr('width', W).attr('height', Hh);
+    svg.append('g').attr('transform', `translate(0,${Hh - m.b})`).call(d3.axisBottom(x).ticks(6).tickSize(0)).call((g) => g.select('.domain').attr('stroke', '#2a2e35'));
+    svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(5).tickSize(-(W - m.l - m.r))).call((g) => { g.select('.domain').remove(); g.selectAll('line').attr('stroke', '#16191e'); });
+    svg.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(0)).attr('y2', y(0)).attr('stroke', '#3a3f47');
+    svg.append('path').datum(pts).attr('fill', 'none').attr('stroke', 'var(--pos)').attr('stroke-width', 1.6).attr('d', d3.line().x((p) => x(p[0])).y((p) => y(p[1])));
+    const last = pts[pts.length - 1], col = COLS.find(([k]) => k === scCol);
+    svg.append('circle').attr('cx', x(last[0])).attr('cy', y(last[1])).attr('r', 3).attr('fill', 'var(--pos)');
+    const unit = col[2] === '%' ? '%' : col[2] === '$bn' ? ' bn US$' : col[2] === 'pp' ? ' pp' : '';
+    $('hnote').textContent = `${col[1]}: latest ${num(last[1], 2)}${unit} (${pts[pts.length - 1][0].toISOString().slice(0, 7)}). `
+      + (scCol === 'trade_balance_12m' ? 'Goods exports minus imports over the past 12 months; above zero is a surplus, below is a deficit. ' : '')
+      + (scCol === 'score' ? 'Score history builds up one point per day from launch. ' : '') + 'Source: same as the table.';
+  }
+  document.querySelectorAll('#scoretbl tbody tr').forEach((r) => r.addEventListener('click', () => { showHist(r.dataset.iso); $('schart').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }));
 
   // ---------------- fundamentals ----------------
   const F_ = (e, k) => e.fundamentals?.[k];
@@ -181,7 +217,7 @@
   $('fund').innerHTML = table(['Economy', 'GDP', 'Debt % GDP', 'Budget bal.', 'Primary bal.', 'Current acct', 'Exports', 'Imports', 'Trade bal.', 'Twin bal.', 'FX reserves'],
     E.map((e) => `<tr><td>${esc(e.name)}</td><td>${usd(F_(e, 'gdp_usd')?.value)}</td><td>${fv(e, 'gov_debt')}</td><td class="${cls(F_(e, 'gov_balance')?.value)}">${fv(e, 'gov_balance', 1)}</td>
       <td class="${cls(F_(e, 'primary_balance')?.value)}">${fv(e, 'primary_balance', 1)}</td><td class="${cls(F_(e, 'current_account')?.value)}">${fv(e, 'current_account', 1)}</td>
-      <td>${usd(F_(e, 'exports_usd_a')?.value)}</td><td>${usd(F_(e, 'imports_usd_a')?.value)}</td><td class="${cls(e.derived?.trade_balance_usd?.value)}">${usd(e.derived?.trade_balance_usd?.value)}</td>
+      <td>${usd(F_(e, 'exports_usd_a')?.value)}</td><td>${usd(F_(e, 'imports_usd_a')?.value)}</td><td class="${cls(e.derived?.trade_balance_usd?.value)}">${ok(e.derived?.trade_balance_usd?.value) ? usd(Math.abs(e.derived.trade_balance_usd.value)) + sd(e.derived.trade_balance_usd.value) : '—'}</td>
       <td class="${cls(e.derived?.twin)}">${sg(e.derived?.twin, 1, '')}</td><td>${usd(F_(e, 'reserves_usd')?.value)}</td></tr>`));
   const comp = E.filter((e) => F_(e, 'consumption') && F_(e, 'investment') && F_(e, 'gov_consumption'));
   $('comp').innerHTML = comp.length ? `<div class="bars">${comp.map((e) => {
@@ -214,10 +250,10 @@
   const TU = E.filter((e) => e.trade_m).sort((a, b) => (b.trade_m.exports_12m ?? 0) - (a.trade_m.exports_12m ?? 0));
   if (TU.length) {
     const tot = (k) => TU.reduce((a, e) => a + (e.trade_m[k] ?? 0), 0);
-    const bn = (v) => !ok(v) ? '—' : (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(1) + 'bn';
-    $('tradeusd').innerHTML = table(['Economy', 'Exports (month)', 'Imports (month)', 'Balance (month)', 'Exports y/y', 'Imports y/y', 'Exports, 12m', 'Imports, 12m', 'Month'],
-      TU.map((e) => { const t = e.trade_m; return `<tr><td>${esc(e.name)}</td><td>${bn(t.exports)}</td><td>${bn(t.imports)}</td><td class="${cls(t.balance)}">${bn(t.balance)}</td><td class="${cls(t.exports_yoy)}">${sg(t.exports_yoy)}</td><td class="${cls(t.imports_yoy)}">${sg(t.imports_yoy)}</td><td>${ok(t.exports_12m) ? '$' + (t.exports_12m / 1000).toFixed(2) + 'tn' : '—'}</td><td>${ok(t.imports_12m) ? '$' + (t.imports_12m / 1000).toFixed(2) + 'tn' : '—'}</td><td class="na">${esc(String(t.date).slice(0, 7))}</td></tr>`; })
-      .concat([`<tr><td><b>All shown</b></td><td><b>${bn(tot('exports'))}</b></td><td><b>${bn(tot('imports'))}</b></td><td><b>${bn(tot('balance'))}</b></td><td></td><td></td><td><b>$${(tot('exports_12m') / 1000).toFixed(2)}tn</b></td><td><b>$${(tot('imports_12m') / 1000).toFixed(2)}tn</b></td><td></td></tr>`]));
+
+    $('tradeusd').innerHTML = table(['Economy', 'Exports (month)', 'Imports (month)', 'Balance (month)', 'Exports y/y', 'Imports y/y', 'Exports, 12m', 'Imports, 12m', 'Balance, 12m', 'Month'],
+      TU.map((e) => { const t = e.trade_m; return `<tr><td>${esc(e.name)}</td><td>${bn(t.exports)}</td><td>${bn(t.imports)}</td><td class="${cls(t.balance)}">${bn(Math.abs(t.balance))}${sd(t.balance)}</td><td class="${cls(t.exports_yoy)}">${sg(t.exports_yoy)}</td><td class="${cls(t.imports_yoy)}">${sg(t.imports_yoy)}</td><td>${ok(t.exports_12m) ? '$' + (t.exports_12m / 1000).toFixed(2) + 'tn' : '—'}</td><td>${ok(t.imports_12m) ? '$' + (t.imports_12m / 1000).toFixed(2) + 'tn' : '—'}</td><td class="${cls(t.exports_12m - t.imports_12m)}">${ok(t.exports_12m) && ok(t.imports_12m) ? bn(Math.abs(t.exports_12m - t.imports_12m)) + sd(t.exports_12m - t.imports_12m) : '—'}</td><td class="na">${esc(String(t.date).slice(0, 7))}</td></tr>`; })
+      .concat([`<tr><td><b>All shown</b></td><td><b>${bn(tot('exports'))}</b></td><td><b>${bn(tot('imports'))}</b></td><td><b>${bn(Math.abs(tot('balance')))}${sd(tot('balance'))}</b></td><td></td><td></td><td><b>$${(tot('exports_12m') / 1000).toFixed(2)}tn</b></td><td><b>$${(tot('imports_12m') / 1000).toFixed(2)}tn</b></td><td></td><td></td></tr>`]));
   } else { $('tradeusd').innerHTML = '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>'; }
 
   // ---------------- energy & transport ----------------
@@ -289,9 +325,10 @@
   const set = id => { links.forEach(a => a.classList.toggle("on", a === byId[id]));
     const a = byId[id], n = a && a.parentNode;
     if (n && n.scrollWidth > n.clientWidth) n.scrollTo({left: a.offsetLeft - n.offsetLeft - n.clientWidth / 2 + a.offsetWidth / 2, behavior: "smooth"}); };
-  const io = new IntersectionObserver(es => {
-    const vis = es.filter(e => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-    if (vis.length) set(vis[0].target.id);
-  }, {rootMargin: "-70px 0px -60% 0px"});
-  secs.forEach(s => io.observe(s));
+  let ticking = false;
+  const pick = () => { ticking = false; let cur = secs[0]?.id;
+    for (const sec of secs) if (sec.getBoundingClientRect().top <= 90) cur = sec.id;
+    if (cur) set(cur); };
+  addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(pick); } }, { passive: true });
+  pick();
 })();
