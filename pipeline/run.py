@@ -27,6 +27,15 @@ def step(msg):
     print(f"[{(datetime.now() - T0).total_seconds():6.0f}s] {msg}", flush=True)
 
 
+def timed(name, fn):
+    t = datetime.now()
+    step(f"start {name}")
+    try:
+        return fn()
+    finally:
+        step(f"done  {name} ({(datetime.now() - t).total_seconds():.0f}s)")
+
+
 # ---------------------------------------------------------------- helpers
 def clean(x):
     if isinstance(x, dict):
@@ -245,10 +254,20 @@ def macro_math(e):
 # ---------------------------------------------------------------- annual (all countries)
 def annual_block():
     """IMF WEO + World Bank for every country. Returns ({iso3: {key: record}}, weo_release)."""
+    from concurrent.futures import ThreadPoolExecutor
     allc, rel_used = {}, None
+    first = next(iter(R.WEO.values()))[0]
+    try:                                            # find the live WEO release once
+        _, rel_used = S.weo_all(first, R.WEO_RELEASES)
+    except Exception:
+        pass
+    rels = [rel_used] if rel_used else R.WEO_RELEASES
+    with ThreadPoolExecutor(4) as ex:
+        weo = {k: ex.submit(S.weo_all, v[0], rels) for k, v in R.WEO.items()}
+        wbf = {k: ex.submit(wb_all, v[0]) for k, v in R.WB.items()}
     for key, (code, label, unit, scale) in R.WEO.items():
         try:
-            data, rel = S.weo_all(code, [rel_used] if rel_used else R.WEO_RELEASES)
+            data, rel = weo[key].result()
             rel_used = rel
             for iso3, s in data.items():
                 s = s[s.index.year <= TODAY.year] * scale
@@ -261,7 +280,7 @@ def annual_block():
             S.log(f"weo.{key}", False, e)
     for key, (ind, label, unit) in R.WB.items():
         try:
-            df = wb_all(ind)
+            df = wbf[key].result()
             for iso3, g in df.groupby("iso3"):
                 g = g.sort_values("year")
                 last = g.iloc[-1]
@@ -340,9 +359,9 @@ def markets_block():
             elif c not in fx:
                 continue
             elif c in R.FX_BASE_IS_FOREIGN:
-                s_, pair, meaning = usd / fx[c], f"{c}/USD", f"US dollars per 1 {R.FX_NAMES[c].split(' ')[-1]}"
+                s_, pair, meaning = usd / fx[c], f"{c}/USD", f"US dollars per 1 {R.FX_UNITS.get(c, c)}"
             else:
-                s_, pair, meaning = fx[c] / usd, f"USD/{c}", f"{R.FX_NAMES[c].split(' ')[-1]} per 1 US dollar"
+                s_, pair, meaning = fx[c] / usd, f"USD/{c}", f"{R.FX_UNITS.get(c, c)} per 1 US dollar"
             s_ = s_.dropna()
             last = float(s_.iloc[-1])
             # sign so that + always means the foreign currency strengthened vs USD
@@ -653,20 +672,17 @@ def save_history(econ):
 
 def main():
     import pycountry
-    step("monthly macro (OECD, BIS, Eurostat)")
-    econ = macro_block()
-    step("annual (IMF WEO, World Bank)")
-    annual, weo_rel = annual_block()
-    step("commodities")
-    prices = prices_block()
-    step("markets (ECB, Treasury, NY Fed)")
-    markets = markets_block()
-    step("electricity (Ember)")
-    power = electricity_block()
-    step("US transport (BTS)")
-    transport = transport_block()
-    step("ports and chokepoints (PortWatch)")
-    ports = ports_block()
+    # Every block hits different servers, so run them side by side.
+    from concurrent.futures import ThreadPoolExecutor
+    jobs = {"macro": macro_block, "annual": annual_block, "prices": prices_block, "markets": markets_block,
+            "power": electricity_block, "transport": transport_block, "ports": ports_block}
+    res = {}
+    with ThreadPoolExecutor(len(jobs)) as ex:
+        futs = {k: ex.submit(timed, k, f) for k, f in jobs.items()}
+        for k, fu in futs.items():
+            res[k] = fu.result()
+    econ, (annual, weo_rel), prices, markets = res["macro"], res["annual"], res["prices"], res["markets"]
+    power, transport, ports = res["power"], res["transport"], res["ports"]
     step("scoring")
     score_economies(econ, ports, power)
     for k, e in econ.items():

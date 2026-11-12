@@ -146,6 +146,10 @@ FX_NAMES = {"EUR": "Euro", "GBP": "British pound", "JPY": "Japanese yen", "CNY":
             "AUD": "Australian dollar", "ZAR": "South African rand", "TRY": "Turkish lira", "IDR": "Indonesian rupiah",
             "SEK": "Swedish krona", "NOK": "Norwegian krone", "PLN": "Polish zloty", "NZD": "New Zealand dollar",
             "SGD": "Singapore dollar", "HKD": "Hong Kong dollar"}
+FX_UNITS = {"EUR": "euro", "GBP": "pound", "JPY": "yen", "CNY": "yuan", "INR": "rupees", "CAD": "Canadian dollars",
+            "CHF": "Swiss francs", "KRW": "won", "MXN": "Mexican pesos", "BRL": "reais", "AUD": "Australian dollar",
+            "ZAR": "rand", "TRY": "lira", "IDR": "rupiah", "SEK": "kronor", "NOK": "kroner", "PLN": "zloty",
+            "NZD": "New Zealand dollar", "SGD": "Singapore dollars", "HKD": "Hong Kong dollars"}
 FX_BASE_IS_FOREIGN = {"EUR", "GBP", "AUD", "NZD"}   # market convention: quoted as USD per 1 unit
 
 # ---------------- PortWatch ----------------

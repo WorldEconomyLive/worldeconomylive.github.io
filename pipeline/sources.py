@@ -24,6 +24,19 @@ STATUS: dict = {}          # key -> {"ok": bool, "note": str}
 DEAD_HOSTS: dict = {}      # circuit breaker: host -> consecutive connection failures
 MIN_GAP = {"sdmx.oecd.org": 4.0, "api.db.nomics.world": 0.4, "api.worldbank.org": 0.3, "stats.bis.org": 1.0}  # polite pacing (seconds)
 _LAST: dict = {}
+import threading
+_LOCK = threading.Lock()
+_HOST_LOCKS: dict = {}
+
+
+def _pace(host):
+    with _LOCK:
+        lk = _HOST_LOCKS.setdefault(host, threading.Lock())
+    with lk:
+        gap = MIN_GAP.get(host, 0) - (time.time() - _LAST.get(host, 0))
+        if gap > 0:
+            time.sleep(gap)
+        _LAST[host] = time.time()
 
 
 def log(key, ok, note=""):
@@ -36,10 +49,7 @@ def _get(url, timeout=60, tries=4, headers=None):
         raise RuntimeError(f"{host} unreachable")
     last = None
     for i in range(tries):
-        gap = MIN_GAP.get(host, 0) - (time.time() - _LAST.get(host, 0))
-        if gap > 0:
-            time.sleep(gap)
-        _LAST[host] = time.time()
+        _pace(host)
         try:
             r = S.get(url, timeout=timeout, headers=headers)
             if r.status_code == 200:
@@ -51,6 +61,8 @@ def _get(url, timeout=60, tries=4, headers=None):
                 time.sleep(min(float(wait), 120) if wait and wait.isdigit() else 45 * (i + 1))
                 continue
             if r.status_code in (400, 401, 403, 404, 422):
+                break
+            if r.status_code >= 500 and i >= 2:   # server error twice more: give up, fallbacks take over
                 break
         except Exception as e:
             last = type(e).__name__
@@ -148,7 +160,7 @@ def oecd_pick(flow, filters, prefer=None, start="2012-01"):
         first = df.groupby(sk, dropna=False).size().sort_values(ascending=False).index[0]
         first = first if isinstance(first, tuple) else (first,)
         for c, v in zip(sk, first):
-            df = df[df[c] == v]
+            df = df[df[c].isna()] if pd.isna(v) else df[df[c] == v]
     s = _series(df["OBS_VALUE"], df["TIME_PERIOD"].map(_period_to_ts), flow)
     attrs = {c: df[c].iloc[0] for c in df.columns if c not in ("OBS_VALUE", "TIME_PERIOD")}
     return s, attrs
@@ -179,6 +191,10 @@ def _choose(df, prefer, dims):
     return df if len(df) else None
 
 
+_NOT_DIMS = {"OBS_VALUE", "TIME_PERIOD", "STRUCTURE", "STRUCTURE_ID", "STRUCTURE_NAME", "ACTION", "OBS_STATUS",
+             "OBS_STATUS_2", "UNIT_MULT", "DECIMALS", "BASE_PER", "CONF_STATUS", "PRICE_BASE_ATTR", "TIME_FORMAT"}
+
+
 def oecd_batch(spec, areas, start="2012-01"):
     """One request for all economies. Returns {iso3: (series, attrs)}."""
     flow = spec["flow"]
@@ -198,7 +214,11 @@ def oecd_batch(spec, areas, start="2012-01"):
             last = e
     if df is None:
         raise RuntimeError(str(last)[:60])
-    dims = dims or [c for c in df.columns if c not in ("OBS_VALUE", "TIME_PERIOD")]
+    if not dims:
+        try:
+            dims = oecd_dims(flow)
+        except Exception:
+            dims = [c for c in df.columns if c not in _NOT_DIMS and df[c].notna().all()]
     out = {}
     for area, g in df.groupby("REF_AREA"):
         g = _choose(g, spec.get("prefer"), dims)
@@ -428,30 +448,70 @@ def portwatch_chokepoint_daily(cid, start):
 
 # ---------------- Ember monthly electricity (CC BY 4.0) ----------------
 EMBER_URLS = [
+    "https://files.ember-energy.org/public-downloads/generation/outputs/release_generation_monthly_global.csv",
     "https://files.ember-energy.org/public-downloads/monthly_full_release_long_format.csv",
     "https://storage.googleapis.com/emb-prod-bkt-publicdata/public-downloads/monthly_full_release_long_format.csv",
 ]
 
 
+_AREA_FIX = {"Türkiye": "TUR", "Turkey": "TUR", "Russia": "RUS", "South Korea": "KOR", "Korea": "KOR",
+             "Taiwan": "TWN", "Vietnam": "VNM", "Iran": "IRN", "Czechia": "CZE", "Bolivia": "BOL",
+             "Venezuela": "VEN", "Tanzania": "TZA", "Moldova": "MDA", "Kosovo": "XKX", "United States": "USA",
+             "United Kingdom": "GBR", "Laos": "LAO", "Syria": "SYR", "North Macedonia": "MKD"}
+
+
+def _area_iso3(name):
+    name = str(name).strip()
+    if name in _AREA_FIX:
+        return _AREA_FIX[name]
+    try:
+        import pycountry
+        return pycountry.countries.lookup(name).alpha_3
+    except Exception:
+        return None
+
+
+def _col(cols, *keys, exclude=()):
+    for k in keys:
+        for low, c in cols.items():
+            if k in low and not any(x in low for x in exclude):
+                return c
+    return None
+
+
 def ember_monthly() -> pd.DataFrame:
-    """Monthly electricity demand (TWh) by ISO3. Columns: iso3, date, value."""
+    """Monthly electricity demand (TWh) by ISO3. Columns: iso3, date, value.
+    Handles Ember's July-2026 wide format (one row per area/month/source, metrics as columns)
+    and the older long format (Variable/Unit/Value rows)."""
     last = None
     for u in EMBER_URLS:
         try:
             df = pd.read_csv(io.BytesIO(_get(u, timeout=180).content), low_memory=False)
-            cols = {c.lower().strip(): c for c in df.columns}
-            iso = cols.get("iso 3 code") or cols.get("country code") or next(c for k, c in cols.items() if "iso" in k)
-            var, date, val = cols.get("variable"), cols.get("date"), cols.get("value")
+            cols = {str(c).lower().strip(): c for c in df.columns}
+            date = _col(cols, "date", "month", exclude=("change",))
+            src = _col(cols, "electricity source", "variable", "source", exclude=("aggregat",))
+            val = (_col(cols, "demand (twh)") or _col(cols, "generation (twh)", exclude=("change", "share"))
+                   or _col(cols, "value", exclude=("change",)))
+            if not (date and src and val):
+                raise RuntimeError(f"columns: {list(df.columns)[:8]}")
+            d = df[df[src].astype(str).str.strip().str.lower() == "demand"]
             unit = cols.get("unit")
-            d = df[df[var].astype(str).str.strip().str.lower() == "demand"]
-            if unit:
+            if unit and len(d):
                 d = d[d[unit].astype(str).str.upper().str.contains("TWH")]
-            out = pd.DataFrame({"iso3": d[iso], "date": pd.to_datetime(d[date], errors="coerce"),
+            iso = _col(cols, "iso 3", "iso3", "country code", "iso")
+            if iso:
+                codes = d[iso]
+            else:
+                area = _col(cols, "area", "country", "entity", exclude=("type", "member"))
+                codes = d[area].map(_area_iso3)
+            out = pd.DataFrame({"iso3": codes, "date": pd.to_datetime(d[date], errors="coerce"),
                                 "value": pd.to_numeric(d[val], errors="coerce")}).dropna()
+            out = out[out.iso3.astype(str).str.len() == 3]
             if len(out) > 100:
                 return out
+            last = f"only {len(out)} demand rows ({len(d)} raw)"
         except Exception as e:
-            last = str(e)[:80]
+            last = (str(e) or type(e).__name__)[:80]
     raise RuntimeError(last or "ember unavailable")
 
 

@@ -273,3 +273,18 @@
   const st = Object.entries(D.status || {});
   $('status').innerHTML = st.length ? `<p class="mono small">${st.filter(([, v]) => v.ok).length} OF ${st.length} SOURCES LOADED</p>` + st.map(([k, v]) => `<span class="${v.ok ? 'ok' : 'no'}" title="${esc(v.note)}">${esc(k)}</span>`).join('') : '';
 })();
+
+// Header: highlight the section on screen
+(() => {
+  const links = [...document.querySelectorAll("nav a")];
+  const byId = Object.fromEntries(links.map(a => [a.getAttribute("href").slice(1), a]));
+  const secs = Object.keys(byId).map(id => document.getElementById(id)).filter(Boolean);
+  const set = id => { links.forEach(a => a.classList.toggle("on", a === byId[id]));
+    const a = byId[id], n = a && a.parentNode;
+    if (n && n.scrollWidth > n.clientWidth) n.scrollTo({left: a.offsetLeft - n.offsetLeft - n.clientWidth / 2 + a.offsetWidth / 2, behavior: "smooth"}); };
+  const io = new IntersectionObserver(es => {
+    const vis = es.filter(e => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    if (vis.length) set(vis[0].target.id);
+  }, {rootMargin: "-70px 0px -60% 0px"});
+  secs.forEach(s => io.observe(s));
+})();
