@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+tests/mock_*.json
+tests/mock_*.csv
+.DS_Store
