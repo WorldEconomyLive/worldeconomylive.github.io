@@ -75,6 +75,9 @@ def fake_port(pid, start):
 
 
 S.portwatch_port_daily = fake_port
+S.ember_monthly = lambda: pd.DataFrame([{"iso3": i, "date": d, "value": 50 + 5 * np.sin(k / 6) + rng.normal(0, 1)} for i in set(ALL) for k, d in enumerate(months)])
+S.bts_monthly = lambda: pd.DataFrame({"system_use_freight_rail": rng.uniform(9e5, 1.1e6, len(months)), "system_use_rail_intermodal": rng.uniform(1.1e6, 1.4e6, len(months)),
+                                     "freight_air_revenue_ton_miles": rng.uniform(3e9, 4e9, len(months)), "waterborne_freight": rng.uniform(1, 2, len(months))}, index=months)
 S.portwatch_chokepoint_daily = lambda cid, start: pd.DataFrame({"date": days, "n_total": rng.integers(20, 80, len(days)), "n_tanker": rng.integers(5, 20, len(days)), "capacity": rng.uniform(1e5, 5e5, len(days))})
 
 import run  # noqa: E402
@@ -83,7 +86,8 @@ run.OUT = ROOT / "tests" / "mock_heartbeat.json"
 run.HIST = ROOT / "tests" / "mock_history.csv"
 run.main()
 d = json.loads(run.OUT.read_text())
-print("world:", d["world"])
+print("world:", {k: d["world"][k] for k in ("score", "label")}, d["world"]["breakdown"])
+print("transport", [(r["name"], round(r["yoy"] or 0, 1)) for r in d["transport"]], "| power", len(d["power"]), "| contrib", d["economies"][0].get("contrib"))
 for e in d["economies"][:2] + d["economies"][-2:]:
     print(e["name"], e["score"], e["coverage"], sorted(e["indicators"]), "| fund", len(e["fundamentals"]), "| vit", len(e["vitals"]), "| derived", sorted(e["derived"]))
 print("prices", len(d["prices"]), "fx", len(d["markets"]["fx"]), d["markets"]["fx"][1]["pair"], d["markets"]["fx"][1]["meaning"],

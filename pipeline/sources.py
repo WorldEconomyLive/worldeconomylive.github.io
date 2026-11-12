@@ -424,3 +424,45 @@ def portwatch_port_daily(pid, start):
 
 def portwatch_chokepoint_daily(cid, start):
     return _dated(_arcgis("Daily_Chokepoints_Data", f"portid = '{cid.upper()}' AND date >= TIMESTAMP '{start} 00:00:00'"))
+
+
+# ---------------- Ember monthly electricity (CC BY 4.0) ----------------
+EMBER_URLS = [
+    "https://files.ember-energy.org/public-downloads/monthly_full_release_long_format.csv",
+    "https://storage.googleapis.com/emb-prod-bkt-publicdata/public-downloads/monthly_full_release_long_format.csv",
+]
+
+
+def ember_monthly() -> pd.DataFrame:
+    """Monthly electricity demand (TWh) by ISO3. Columns: iso3, date, value."""
+    last = None
+    for u in EMBER_URLS:
+        try:
+            df = pd.read_csv(io.BytesIO(_get(u, timeout=180).content), low_memory=False)
+            cols = {c.lower().strip(): c for c in df.columns}
+            iso = cols.get("iso 3 code") or cols.get("country code") or next(c for k, c in cols.items() if "iso" in k)
+            var, date, val = cols.get("variable"), cols.get("date"), cols.get("value")
+            unit = cols.get("unit")
+            d = df[df[var].astype(str).str.strip().str.lower() == "demand"]
+            if unit:
+                d = d[d[unit].astype(str).str.upper().str.contains("TWH")]
+            out = pd.DataFrame({"iso3": d[iso], "date": pd.to_datetime(d[date], errors="coerce"),
+                                "value": pd.to_numeric(d[val], errors="coerce")}).dropna()
+            if len(out) > 100:
+                return out
+        except Exception as e:
+            last = str(e)[:80]
+    raise RuntimeError(last or "ember unavailable")
+
+
+# ---------------- US Bureau of Transportation Statistics (public domain) ----------------
+def bts_monthly() -> pd.DataFrame:
+    url = "https://data.bts.gov/resource/crem-w557.json?$order=date%20DESC&$limit=400"
+    rows = _get(url, timeout=90).json()
+    df = pd.DataFrame(rows)
+    if df.empty or "date" not in df.columns:
+        raise RuntimeError("empty")
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"]).set_index("date").sort_index()
+    return df.apply(pd.to_numeric, errors="coerce")
+_PINK_CACHE = None

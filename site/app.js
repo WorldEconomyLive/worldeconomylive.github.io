@@ -43,6 +43,8 @@
   $('wscore').textContent = ok(w.score) ? Math.round(w.score) : '—';
   $('wlabel').textContent = w.label || 'Pending'; $('wlabel').className = 'pill ' + (w.label || '');
   $('headline').textContent = w.headline || '';
+  const bd = w.breakdown || {};
+  if (ok(bd['economies (GDP-weighted)'])) $('breakdown').textContent = `ECONOMIES ${Math.round(bd['economies (GDP-weighted)'])} · GLOBAL STRESS ${ok(bd['global stress']) ? Math.round(bd['global stress']) : '—'}`;
   if (w.tracked) $('coverage').textContent = `${w.tracked} ECONOMIES IN DEPTH · ${w.countries} COUNTRIES ON THE MAP`;
 
   // ---------------- map ----------------
@@ -51,6 +53,7 @@
     gdp: { get: (r) => r.gdp, color: (v) => div(v, 6), legend: ['−6%', '0', '+6%'], ramp: [div(-6, 6), div(0, 6), div(6, 6)] },
     debt: { get: (r) => r.gov_debt, color: (v) => seq(v, 0, 150, NEG), legend: ['0%', '', '150%+ of GDP'], ramp: [seq(0, 0, 150, NEG), seq(150, 0, 150, NEG)] },
     ca: { get: (r) => r.current_account, color: (v) => div(v, 8), legend: ['Deficit', '0', 'Surplus'], ramp: [div(-8, 8), div(0, 8), div(8, 8)] },
+    power: { get: (r) => r.power, color: (v) => div(v, 8), legend: ['−8%', '0', '+8% power use'], ramp: [div(-8, 8), div(0, 8), div(8, 8)] },
     inflation: { get: (r) => r.inflation, color: (v) => seq(v, 0, 8, NEG), legend: ['0%', '', '8%+'], ramp: [seq(0, 0, 8, NEG), seq(8, 0, 8, NEG)], fmt: (v) => num(v) + '% a year' },
     unemployment: { get: (r) => r.unemployment, color: (v) => seq(v, 2, 10, NEG), legend: ['2%', '', '10%+'], ramp: [seq(2, 2, 10, NEG), seq(10, 2, 10, NEG)], fmt: (v) => num(v) + '% jobless' },
     trade: { get: (r) => r.trade, color: (v) => div(v, 30), legend: ['−30%', '0', '+30%'], ramp: [div(-30, 30), div(0, 30), div(30, 30)], fmt: (v) => sg(v, 0) + ' port cargo y/y' },
@@ -74,17 +77,19 @@
     const path = d3.geoPath(proj);
     const svg = d3.select(el).append('svg').attr('viewBox', `0 0 ${W} ${H}`).attr('preserveAspectRatio', 'xMidYMid meet');
     svg.append('path').datum(d3.geoGraticule10()).attr('class', 'graticule').attr('d', path);
-    paths = svg.append('g').selectAll('path').data(feats).join('path').attr('class', 'country').attr('d', path)
+    const hl = svg.append('path').attr('class', 'hl');
+    paths = svg.insert('g', '.hl').selectAll('path').data(feats).join('path').attr('class', 'country').attr('d', path)
+      .on('mouseenter', (ev, d) => hl.attr('d', path(d)).style('opacity', 1))
       .on('mousemove', (ev, d) => {
         const r = D.map?.[String(+d.id)], L = LAYERS[layer];
         let h = `<b>${esc(r?.name || d.properties.name)}</b>`;
         if (r) { if (ok(r.score)) h += `<br>Score ${num(r.score, 0)} · ${esc(r.label)}`; if (ok(r.gdp)) h += `<br>GDP growth ${sg(r.gdp)}`; if (ok(r.inflation)) h += `<br>Inflation ${num(r.inflation)}%`; if (ok(r.unemployment)) h += `<br>Unemployment ${num(r.unemployment)}%`;
-          if (ok(r.gov_debt)) h += `<br>Gov. debt ${num(r.gov_debt, 0)}% of GDP`; if (ok(r.current_account)) h += `<br>Current account ${sg(r.current_account)} of GDP`; if (ok(r.gdp_usd)) h += `<br>GDP ${usd(r.gdp_usd)}`; if (ok(r.trade)) h += `<br>Port cargo ${sg(r.trade, 0)} y/y`;
+          if (ok(r.gov_debt)) h += `<br>Gov. debt ${num(r.gov_debt, 0)}% of GDP`; if (ok(r.current_account)) h += `<br>Current account ${sg(r.current_account)} of GDP`; if (ok(r.gdp_usd)) h += `<br>GDP ${usd(r.gdp_usd)}`; if (ok(r.trade)) h += `<br>Port cargo ${sg(r.trade, 0)} y/y`; if (ok(r.power)) h += `<br>Power use ${sg(r.power, 1)} y/y`;
           if (!r.tracked) h += '<br><span style="color:#5f646d">annual data (IMF/World Bank)</span>'; }
         else h += '<br><span style="color:#5f646d">not tracked yet</span>';
         showTip(ev, h);
       })
-      .on('mouseleave', hideTip)
+      .on('mouseleave', () => { hideTip(); hl.style('opacity', 0); })
       .on('click', (ev, d) => { const r = D.map?.[String(+d.id)]; const i = E.findIndex((e) => e.iso3 === r?.iso3); if (i >= 0) { filt = 'all'; renderGrid(); showDetail(i); $('economies').scrollIntoView(); } });
     const cps = (T?.chokepoints || []).filter((c) => ok(c.lon));
     cpG = svg.append('g');
@@ -103,7 +108,7 @@
   (M.fx || []).filter((f) => ['EUR', 'JPY', 'CNY', 'GBP'].includes(f.code)).forEach((f) => tk.push(`<span>${esc(f.code === 'EUR' ? 'EUR/USD' : f.code === 'GBP' ? 'GBP/USD' : 'USD/' + f.code)}<b>${num(f.latest, f.latest < 10 ? 4 : 2)}</b><em class="${cls(f.y1)}">${sg(f.y1, 1)} y/y</em></span>`));
   (M.rates || []).filter((r) => /10-year Treasury|Fed funds/.test(r.name)).forEach((r) => tk.push(`<span>${esc(r.name.toUpperCase())}<b>${num(r.latest, 2)}%</b></span>`));
   if (ok(w.trade_yoy)) tk.push(`<span>GLOBAL PORT CARGO<b>${sg(w.trade_yoy, 1)}</b>y/y</span>`);
-  $('ticker').innerHTML = tk.join('') || '<span>Markets fill in on the first automated run.</span>';
+  $('ticker').innerHTML = tk.length ? tk.join('') + tk.join('') : '<span>Markets fill in on the first automated run.</span>';
 
   $('drivers').innerHTML = (D.drivers || []).map((d) => `<li>${esc(d)}</li>`).join('') || '<li>Waiting for the first data run.</li>';
 
@@ -157,7 +162,8 @@
     $('detail').innerHTML = `<div class="detail"><h3>${esc(e.name)}</h3><div class="score" style="font-size:56px">${ok(e.score) ? Math.round(e.score) : '—'}<small>/100</small></div>
       <span class="pill ${esc(e.label)}">${esc(e.label)}</span><span class="mono small" style="margin-left:10px">${esc(e.coverage || '')} PILLARS</span>
       <p class="plain">${esc(plain(e)) || 'Detailed data fills in after the first automated run.'}</p>
-      ${live ? `<h3>Live indicators</h3><ul class="facts">${live}</ul>` : ''}${mth ? `<h3>Formulas</h3><ul class="facts">${mth}</ul>` : ''}
+      ${e.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(e.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25).replace(/%</g, '<')}</div>`).join('')}</div>` : ''}
+      ${live ? `<h3>Live indicators</h3><ul class="facts">${live}${e.power ? fact('Electricity demand', sg(e.power.yoy_3m), `3 MONTHS Y/Y · ${esc(String(e.power.date).slice(0, 7))} · EMBER`, spark(e.power.spark)) : ''}</ul>` : ''}${mth ? `<h3>Formulas</h3><ul class="facts">${mth}</ul>` : ''}
       ${gov ? `<h3>Government and trade</h3><ul class="facts">${gov}</ul>` : ''}${vit ? `<h3>People and health</h3><ul class="facts">${vit}</ul>` : ''}</div>`;
   }
   renderGrid();
@@ -213,6 +219,17 @@
       TU.map((e) => { const t = e.trade_m; return `<tr><td>${esc(e.name)}</td><td>${bn(t.exports)}</td><td>${bn(t.imports)}</td><td class="${cls(t.balance)}">${bn(t.balance)}</td><td class="${cls(t.exports_yoy)}">${sg(t.exports_yoy)}</td><td class="${cls(t.imports_yoy)}">${sg(t.imports_yoy)}</td><td>${ok(t.exports_12m) ? '$' + (t.exports_12m / 1000).toFixed(2) + 'tn' : '—'}</td><td>${ok(t.imports_12m) ? '$' + (t.imports_12m / 1000).toFixed(2) + 'tn' : '—'}</td><td class="na">${esc(String(t.date).slice(0, 7))}</td></tr>`; })
       .concat([`<tr><td><b>All shown</b></td><td><b>${bn(tot('exports'))}</b></td><td><b>${bn(tot('imports'))}</b></td><td><b>${bn(tot('balance'))}</b></td><td></td><td></td><td><b>$${(tot('exports_12m') / 1000).toFixed(2)}tn</b></td><td><b>$${(tot('imports_12m') / 1000).toFixed(2)}tn</b></td><td></td></tr>`]));
   } else { $('tradeusd').innerHTML = '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>'; }
+
+  // ---------------- energy & transport ----------------
+  const PW = Object.entries(D.power || {}).map(([iso, v]) => ({ iso, name: D.map?.[Object.keys(D.map || {}).find((k) => D.map[k].iso3 === iso)]?.name || iso, ...v }))
+    .sort((a, b) => (b.twh ?? 0) - (a.twh ?? 0));
+  $('power').innerHTML = PW.length ? table(['Country', 'Demand, latest month', 'Last 3 months y/y', 'Trend (y/y)', 'Month'],
+    PW.slice(0, 40).map((r) => `<tr><td>${esc(r.name)}</td><td>${num(r.twh, 1)} TWh</td><td class="${cls(r.yoy_3m)}">${sg(r.yoy_3m)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(String(r.date).slice(0, 7))}</td></tr>`))
+    : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
+  const TR = D.transport || [];
+  $('transport').innerHTML = TR.length ? table(['Mode', 'Latest', 'vs a year ago', 'Trend', 'Month'],
+    TR.map((r) => `<tr><td>${esc(r.name)}</td><td>${big(r.latest)}</td><td class="${cls(r.yoy)}">${sg(r.yoy)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(String(r.date).slice(0, 7))}</td></tr>`))
+    : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
 
   // ---------------- commodities ----------------
   const vol = (s) => (T?.global && s ? T.global[s] : null);

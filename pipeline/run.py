@@ -20,6 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "site" / "data" / "heartbeat.json"
 HIST = ROOT / "data" / "score_history.csv"
 TODAY = pd.Timestamp.utcnow().tz_localize(None).normalize()
+T0 = datetime.now()
+
+
+def step(msg):
+    print(f"[{(datetime.now() - T0).total_seconds():6.0f}s] {msg}", flush=True)
 
 
 # ---------------------------------------------------------------- helpers
@@ -61,16 +66,23 @@ def pct(a, b):
 
 
 def z_last(s, years=10, min_n=24):
+    """Robust z-score of the latest value vs this series' own history:
+    median/MAD over the last `years`, excluding the pandemic distortion (Mar 2020 - Dec 2021)."""
     if s is None:
         return None
     s = s.dropna()
     if len(s) < min_n:
         return None
     h = s[s.index >= s.index[-1] - pd.DateOffset(years=years)]
-    sd = h.std()
+    h = h[(h.index < "2020-03-01") | (h.index > "2021-12-31")]
+    if len(h) < max(8, min_n // 2):
+        return None
+    med = h.median()
+    mad = (h - med).abs().median() * 1.4826
+    sd = mad if mad and not np.isnan(mad) else h.std()
     if not sd or np.isnan(sd):
         return None
-    return float(np.clip((s.iloc[-1] - h.mean()) / sd, -3, 3))
+    return float(np.clip((s.iloc[-1] - med) / sd, -3, 3))
 
 
 # ---------------------------------------------------------------- macro (monthly, batched)
@@ -295,6 +307,7 @@ def derive(e, f):
 def prices_block():
     try:
         ps = S.pink_sheet()
+        S._PINK_CACHE = ps
         S.log("worldbank.pinksheet", True, f"{ps.index[-1]:%Y-%m}")
     except Exception as e:
         S.log("worldbank.pinksheet", False, e)
@@ -400,12 +413,15 @@ def ports_block():
                        ports[ports["ISO3"].isin(R.ECONOMIES)].groupby("ISO3").head(R.PORTS_PER_ECONOMY)]
                       ).drop_duplicates("portid")
     start = (TODAY - pd.Timedelta(days=430)).strftime("%Y-%m-%d")
-    frames = []
-    for pid in picks["portid"]:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(pid):
         try:
-            frames.append(S.portwatch_port_daily(pid, start))
+            return S.portwatch_port_daily(pid, start)
         except Exception:
-            pass
+            return None
+    with ThreadPoolExecutor(8) as ex:
+        frames = [f for f in ex.map(_one, list(picks["portid"])) if f is not None and len(f)]
     S.log("portwatch.daily", bool(frames), f"{len(frames)}/{len(picks)} ports")
     if not frames:
         return None
@@ -445,10 +461,19 @@ def ports_block():
     wky = (wk.pct_change(52, fill_method=None) * 100)
     wky = wky[wky.index <= end].tail(8)
 
+    def _cp(cid):
+        try:
+            return cid, S.portwatch_chokepoint_daily(cid, start)
+        except Exception:
+            return cid, None
+    with ThreadPoolExecutor(8) as ex:
+        cpdata = dict(ex.map(_cp, list(R.CHOKEPOINTS)))
     cps = []
     for cid, (cname, lon, lat) in R.CHOKEPOINTS.items():
         try:
-            d = S.portwatch_chokepoint_daily(cid, start)
+            d = cpdata.get(cid)
+            if d is None or not len(d):
+                continue
             cur, prv = d[(d.date >= a) & (d.date <= end)], d[(d.date >= pa) & (d.date <= pb)]
             cps.append({"name": cname, "lon": lon, "lat": lat,
                         "transits_yoy": pct(float(cur["n_total"].sum()), float(prv["n_total"].sum())),
@@ -484,15 +509,99 @@ def label(score):
     return "Strong" if score >= 60 else "Steady" if score >= 45 else "Soft" if score >= 35 else "Stressed"
 
 
-def score_economies(econ, ports):
+PILLAR_NAMES = {"activity": "Output", "labor": "Jobs", "prices": "Prices", "trade": "Trade"}
+
+
+def score_economies(econ, ports, power):
     for iso3, e in econ.items():
         if ports and iso3 in ports["economies"]:
             e["trade_yoy"] = ports["economies"][iso3]
             e["pillars"]["trade"] = float(np.clip(e["trade_yoy"] / 10, -3, 3))
-        zs = [v for v in e["pillars"].values() if v is not None]
-        e["score"] = float(np.clip(50 + 15 * np.mean(zs), 0, 100)) if len(zs) >= 2 else None
+        pz = power.get(iso3, {}).get("z")
+        if pz is not None:                      # electricity demand joins the output pillar
+            a = e["pillars"].get("activity")
+            e["pillars"]["activity"] = pz if a is None else (a + pz) / 2
+        zs = {k: v for k, v in e["pillars"].items() if v is not None}
+        if len(zs) >= 2:
+            e["score"] = float(np.clip(50 + 15 * np.mean(list(zs.values())), 0, 100))
+            e["contrib"] = {PILLAR_NAMES[k]: 15 * v / len(zs) for k, v in zs.items()}   # points vs 50
+        else:
+            e["score"] = None
         e["label"] = label(e["score"])
         e["coverage"] = f"{len(zs)}/4"
+
+
+def electricity_block():
+    try:
+        df = S.ember_monthly()
+        S.log("ember.electricity", True, f"{df.iso3.nunique()} countries")
+    except Exception as ex:
+        S.log("ember.electricity", False, ex)
+        return {}
+    out = {}
+    for iso3, g in df.groupby("iso3"):
+        s = g.set_index("date")["value"].sort_index()
+        s = s[~s.index.duplicated()]
+        if len(s) < 27 or age_months(s) > 8:
+            continue
+        s3 = s.rolling(3).sum()
+        y = ((s3 / s3.shift(12) - 1) * 100).dropna()     # 3-month demand vs same 3 months a year ago
+        if not len(y):
+            continue
+        out[iso3] = {"twh": float(s.iloc[-1]), "date": s.index[-1], "yoy_3m": float(y.iloc[-1]),
+                     "z": z_last(y, min_n=24), "spark": spark(y, 24)}
+    return out
+
+
+def transport_block():
+    """US freight by mode (BTS Monthly Transportation Statistics). Columns chosen by keyword."""
+    try:
+        df = S.bts_monthly()
+    except Exception as ex:
+        S.log("bts.transport", False, ex)
+        return []
+    want = [("Rail carloads", ["freight_rail"], ["intermodal", "ton"]),
+            ("Rail intermodal (containers, trailers)", ["intermodal"], []),
+            ("Air cargo (revenue ton-miles)", ["air", "freight"], ["passenger"]),
+            ("Air cargo (revenue ton-miles)", ["air", "ton"], ["passenger"]),
+            ("Waterborne freight", ["waterborne"], []),
+            ("Pipeline", ["pipeline"], []),
+            ("Transborder freight, total", ["transborder", "total"], [])]
+    rows, used = [], set()
+    for name, inc, exc in want:
+        if name in {r["name"] for r in rows}:
+            continue
+        col = next((c for c in df.columns if all(k in c.lower() for k in inc) and not any(k in c.lower() for k in exc) and c not in used), None)
+        if not col:
+            continue
+        s = df[col].dropna()
+        if len(s) < 13 or age_months(s) > 10:
+            continue
+        used.add(col)
+        rows.append({"name": name, "latest": float(s.iloc[-1]), "date": s.index[-1],
+                     "yoy": pct(float(s.iloc[-1]), value_ago(s, 360)), "spark": spark(s, 24), "field": col})
+    S.log("bts.transport", bool(rows), f"{len(rows)} series")
+    return rows
+
+
+def global_stress(prices, ports):
+    """Global supply/energy stress: z-scores of oil and gas price shocks and world port cargo."""
+    comps = {}
+    try:
+        ps = S._PINK_CACHE
+        for col_prefix, key in (("Crude oil, Brent", "Oil price shock"), ("Natural gas, Europe", "Gas price shock")):
+            col = next((c for c in ps.columns if str(c).startswith(col_prefix)), None)
+            if col:
+                y = ((ps[col] / ps[col].shift(12) - 1) * 100).dropna()
+                z = z_last(y, years=15)
+                if z is not None:
+                    comps[key] = -z                     # price spikes = stress
+    except Exception:
+        pass
+    if ports and ports["global"].get("total") is not None:
+        comps["World port cargo"] = float(np.clip(ports["global"]["total"] / 10, -3, 3))
+    return comps
+
 
 
 def drivers(econ, prices, ports):
@@ -544,12 +653,22 @@ def save_history(econ):
 
 def main():
     import pycountry
+    step("monthly macro (OECD, BIS, Eurostat)")
     econ = macro_block()
+    step("annual (IMF WEO, World Bank)")
     annual, weo_rel = annual_block()
+    step("commodities")
     prices = prices_block()
+    step("markets (ECB, Treasury, NY Fed)")
     markets = markets_block()
+    step("electricity (Ember)")
+    power = electricity_block()
+    step("US transport (BTS)")
+    transport = transport_block()
+    step("ports and chokepoints (PortWatch)")
     ports = ports_block()
-    score_economies(econ, ports)
+    step("scoring")
+    score_economies(econ, ports, power)
     for k, e in econ.items():
         f = annual.get(k, {})
         e["vitals"] = {x: f[x] for x in R.VITAL_KEYS if x in f}
@@ -560,8 +679,20 @@ def main():
     hist = save_history(econ)
     for k in econ:
         econ[k]["history"] = hist.get(k, [])
-    scores = [e["score"] for e in econ.values() if e["score"] is not None]
-    world = float(np.mean(scores)) if scores else None
+    for k, e in econ.items():
+        if k in power:
+            e["power"] = power[k]
+    # World score: GDP-weighted country scores (80%) + global energy/supply stress (20%)
+    sc = [(e["score"], (annual.get(k, {}).get("gdp_usd") or {}).get("value") or 0) for k, e in econ.items() if e["score"] is not None]
+    wsum = sum(w for _, w in sc)
+    country_avg = (sum(s_ * w for s_, w in sc) / wsum) if wsum else (float(np.mean([s_ for s_, _ in sc])) if sc else None)
+    stress = global_stress(prices, ports)
+    stress_score = 50 + 15 * float(np.mean(list(stress.values()))) if stress else None
+    world = None
+    if country_avg is not None:
+        world = float(np.clip(0.8 * country_avg + 0.2 * (stress_score if stress_score is not None else country_avg), 0, 100))
+    world_breakdown = {"economies (GDP-weighted)": country_avg, "global stress": stress_score,
+                       "stress_components": stress}
 
     # Global rates table (every tracked economy)
     for e in econ.values():
@@ -576,7 +707,7 @@ def main():
 
     # Map: every country with any data, keyed by ISO numeric
     map_rows = {}
-    for iso3 in set(annual) | set(econ) | set((ports or {}).get("economies", {})):
+    for iso3 in set(annual) | set(econ) | set((ports or {}).get("economies", {})) | set(power):
         c = pycountry.countries.get(alpha_3=iso3)
         if not c:
             continue
@@ -593,6 +724,8 @@ def main():
                     row[k] = x["latest"]
         if ports and iso3 in ports["economies"]:
             row["trade"] = ports["economies"][iso3]
+        if iso3 in power:
+            row["power"] = power[iso3]["yoy_3m"]
         row.setdefault("inflation", row.get("inflation_a"))
         row.setdefault("unemployment", row.get("unemployment_a"))
         row.setdefault("gdp", row.get("gdp_growth"))
@@ -601,15 +734,17 @@ def main():
     data = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "weo_release": weo_rel,
-        "world": {"score": world, "label": label(world), "headline": headline(prices, ports),
+        "world": {"score": world, "label": label(world), "headline": headline(prices, ports), "breakdown": world_breakdown,
                   "trade_yoy": ports["global"].get("total") if ports else None,
                   "countries": len(map_rows), "tracked": len(econ)},
         "drivers": drivers(econ, prices, ports),
         "economies": sorted(econ.values(), key=lambda e: (not e["g20"], -(e["score"] or -1))),
         "map": map_rows,
-        "prices": prices, "markets": markets, "trade": ports, "products": R.PRODUCTS,
+        "prices": prices, "markets": markets, "trade": ports, "products": R.PRODUCTS, "transport": transport,
+        "power": {k: v for k, v in power.items()},
         "status": S.STATUS,
     }
+    step("writing output")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(clean(data), separators=(",", ":")))
     ok = sum(v["ok"] for v in S.STATUS.values())
