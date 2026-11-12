@@ -4,64 +4,123 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>World Economy Live — the world economy's vital signs</title>
-<meta name="description" content="A free, open, daily-updated pulse of the world economy: jobs, prices, trade, shipping, people and health, from public data.">
+<meta name="description" content="A free, open, live view of the world economy: growth, jobs, inflation, trade, shipping, debt, markets, people and health. Updated daily from public data.">
+<meta name="theme-color" content="#000000">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="brand">World Economy <span>Live</span></div>
-    <div class="tag">The world economy's vital signs, in plain English. Updated daily from public data.</div>
-  </header>
-  <div id="banner"></div>
+<header class="bar">
+  <div class="brand"><span class="dot"></span>WORLD ECONOMY <b>LIVE</b></div>
+  <nav>
+    <a href="#map">Map</a><a href="#economies">Economies</a><a href="#trade">Trade</a><a href="#markets">Markets</a><a href="#fundamentals">Debt</a><a href="#people">People</a><a href="#method">Method</a>
+  </nav>
+  <div class="upd mono" id="upd">—</div>
+</header>
 
-  <section class="hero" id="hero"></section>
+<section class="hero" id="map">
+  <div id="globe"></div>
+  <div class="overlay">
+    <div class="k">World score</div>
+    <div class="score"><span id="wscore">—</span><small>/100</small></div>
+    <div class="pill" id="wlabel">Pending</div>
+    <p class="headline" id="headline">Loading the world…</p>
+  </div>
+  <div class="layers" id="layers">
+    <button data-l="score" class="on">Score</button><button data-l="inflation">Inflation</button><button data-l="unemployment">Jobless</button><button data-l="trade">Port trade</button>
+  </div>
+  <div class="legend mono" id="legend"></div>
+  <div class="tip mono" id="tip"></div>
+</section>
 
-  <h2>What changed</h2>
-  <p class="sub">The biggest moves in the latest data.</p>
-  <ul class="drivers" id="drivers"></ul>
+<div class="ticker mono" id="ticker"></div>
 
-  <h2>Economies</h2>
-  <p class="sub">Score 0–100. 50 is normal for that country. Tap one for details.</p>
-  <div class="grid" id="econ"></div>
-  <div id="detail"></div>
+<main>
+  <section>
+    <h2><span>01</span>What changed</h2>
+    <ul class="drivers" id="drivers"></ul>
+  </section>
 
-  <h2>Global trade by region and product</h2>
-  <p class="sub" id="tradesub">Cargo through each region's busiest ports vs the same 28 days last year.</p>
-  <div class="scroll" id="heat"></div>
+  <section id="economies">
+    <h2><span>02</span>Economies</h2>
+    <p class="sub">Vital-signs score, 0–100. 50 is normal for that country. Tap one for the full readout.</p>
+    <div class="grid" id="econ"></div>
+    <div id="detail"></div>
+  </section>
 
-  <h2>Shipping chokepoints</h2>
-  <p class="sub">Ships passing through the world's key straits and canals vs a year ago.</p>
-  <div class="bars" id="choke"></div>
+  <section>
+    <h2><span>03</span>Macro scorecard</h2>
+    <p class="sub">The headline numbers and the classic formulas, side by side.</p>
+    <div class="tbl" id="scorecard"></div>
+  </section>
 
-  <h2>Prices</h2>
-  <p class="sub">What things cost vs a year ago, next to how much of them is moving by sea.</p>
-  <div class="legend"><span><i class="sw" style="background:#eb6834"></i>Price</span><span><i class="sw" style="background:#888780"></i>Volume shipped (matching ship type)</span></div>
-  <div class="bars" id="prices"></div>
+  <section id="fundamentals">
+    <h2><span>04</span>Debt, deficits and balances</h2>
+    <p class="sub">Annual. IMF World Economic Outlook (current-year estimates marked *) and World Bank.</p>
+    <div class="tbl" id="fund"></div>
+    <h3>What each economy is made of</h3>
+    <p class="sub">GDP = consumption + investment + government + net exports, as % of GDP.</p>
+    <div class="legend-row mono"><i style="background:var(--c1)"></i>C <i style="background:var(--c2)"></i>I <i style="background:var(--c3)"></i>G <i style="background:var(--c4)"></i>X − M</div>
+    <div id="comp"></div>
+    <h3>Debt math</h3>
+    <p class="sub">Is each government's debt ratio on track to rise or fall? From bond yields, growth and inflation.</p>
+    <div class="tbl" id="debtmath"></div>
+  </section>
 
-  <h2>Markets</h2>
-  <p class="sub">Currencies, interest rates, stock indices and commodities. Rates show change in percentage points (pp).</p>
-  <div id="markets"></div>
+  <section id="trade">
+    <h2><span>05</span>Global trade</h2>
+    <p class="sub" id="tradesub">Cargo through each region's busiest ports vs the same days a year ago.</p>
+    <div class="tbl" id="heat"></div>
+    <h3>Imports vs exports by region</h3>
+    <div class="bars" id="impexp"></div>
+    <h3>Shipping chokepoints</h3>
+    <p class="sub">Ships through the world's key straits and canals vs a year ago.</p>
+    <div class="bars" id="choke"></div>
+  </section>
 
-  <h2>US fast signals</h2>
-  <p class="sub">Weekly and monthly indicators that move before GDP.</p>
-  <div class="scroll" id="usfast"></div>
+  <section>
+    <h2><span>06</span>Commodities</h2>
+    <p class="sub">Price vs a year ago, next to how much of that kind of cargo is moving by sea. Monthly, World Bank Pink Sheet.</p>
+    <div class="legend-row mono"><i style="background:var(--warm)"></i>Price <i style="background:var(--dim)"></i>Volume shipped</div>
+    <div class="bars" id="prices"></div>
+  </section>
 
-  <h2>People and health</h2>
-  <p class="sub">The slow-moving foundations of each economy (World Bank, latest year).</p>
-  <div class="scroll" id="vitals"></div>
+  <section id="markets">
+    <h2><span>07</span>Markets</h2>
+    <h3>Currencies</h3>
+    <div class="tbl" id="fx"></div>
+    <h3>US interest rates</h3>
+    <div class="tbl" id="rates"></div>
+    <div id="usfiscal"></div>
+  </section>
 
-  <h2>How this works</h2>
-  <details><summary>The score</summary>
-    <p>Each economy gets up to four pillars: <b>activity</b> (factory output growth), <b>jobs</b> (change in unemployment over 12 months, inverted), <b>prices</b> (distance of inflation from 2%, inverted) and <b>trade</b> (port cargo vs a year ago). Each pillar is compared with that country's own last 10 years as a z-score, so +1 means one standard deviation healthier than usual. The score is 50 + 15 × the average pillar, capped at 0–100.</p>
-    <p>60+ Strong · 45–60 Steady · 35–45 Soft · under 35 Stressed. It is a summary, not a forecast. Always check the parts behind it.</p>
-  </details>
-  <details><summary>Data sources and status</summary><div id="status" class="status"></div>
-    <p>IMF PortWatch (port and chokepoint data), FRED / U.S. agencies (FX, rates, prices), index owners (S&amp;P, Nasdaq, Nikkei; % changes shown), Eurostat, OECD and BIS via DBnomics, World Bank. Port data lags: the latest 10 days are excluded.</p>
-  </details>
+  <section id="people">
+    <h2><span>08</span>People and health</h2>
+    <p class="sub">The slow-moving foundations. World Bank, latest year.</p>
+    <div class="tbl" id="vitals"></div>
+  </section>
 
-  <footer>Open source. Public data only. Not investment advice. <span id="gen"></span></footer>
-</div>
+  <section id="method">
+    <h2><span>09</span>Method</h2>
+    <details open><summary>The score</summary>
+      <p>Up to four pillars per economy: <b>activity</b> (factory output growth, or GDP growth), <b>jobs</b> (12-month change in unemployment, inverted), <b>prices</b> (distance of inflation from 2%, inverted) and <b>trade</b> (port cargo vs a year ago). Each is compared with that country's own last 10 years. An economy needs at least two pillars to be scored.</p>
+      <p class="mono small">60+ STRONG · 45–60 STEADY · 35–45 SOFT · &lt;35 STRESSED</p>
+    </details>
+    <details><summary>The formulas</summary><div id="formulas"></div></details>
+    <details><summary>Sources, licences and status</summary>
+      <p class="small">OECD Data Explorer (CC BY 4.0) · World Bank: World Development Indicators and Commodity Price Data "Pink Sheet" (CC BY 4.0) · IMF World Economic Outlook via DBnomics · Eurostat · European Central Bank reference rates · Bank for International Settlements policy rates · U.S. Department of the Treasury (Fiscal Data, daily yield curves) · Federal Reserve Bank of New York (effective fed funds rate) · IMF PortWatch (port and chokepoint activity from satellite ship tracking). Port data lags, so the latest 10 days are excluded. Figures are reproduced as published or transformed (year-over-year changes, ratios, scores) by this site; sources are not responsible for these transformations.</p>
+      <div class="status" id="status"></div>
+    </details>
+  </section>
+
+  <footer class="mono">OPEN SOURCE · PUBLIC DATA ONLY · NOT INVESTMENT ADVICE · <span id="gen"></span></footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

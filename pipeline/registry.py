@@ -1,157 +1,181 @@
-"""What we track. Add an economy or indicator here and it flows through the whole site.
+"""What World Economy Live tracks. Add an economy or series here and it flows to the site.
 
-Each monthly indicator lists candidate sources, tried in order. The first one that
-returns fresh data (last point within MAX_STALE_MONTHS) wins. This keeps the site
-alive when any single source changes a code.
+Monthly indicators list candidate sources tried in order; the first with fresh data wins.
+Kinds:
+  ("oecd_key", flow, key, transform)        exact OECD series key
+  ("oecd", flow, filters, prefer, transform) OECD with dimension discovery + preferences
+  ("dbn", series_id, transform)            DBnomics (Eurostat, IMF ...)
+  ("bis", country_code, transform)         BIS central bank policy rate
+  ("wb", indicator, transform)             World Bank annual (last resort; shown, not scored)
+transform: "level" | "yoy" (12-month % change) | "yoyq" (4-quarter % change)
 """
 
 MAX_STALE_MONTHS = 15
 
+# iso3: (name, iso2, eurostat geo, ISO numeric for the map)
 ECONOMIES = {
-    # iso3: (name, iso2, eurostat geo or None, flag of euro area member)
-    "USA": ("United States", "US", None),
-    "CHN": ("China", "CN", None),
-    "JPN": ("Japan", "JP", None),
-    "DEU": ("Germany", "DE", "DE"),
-    "GBR": ("United Kingdom", "GB", None),
-    "FRA": ("France", "FR", "FR"),
-    "ITA": ("Italy", "IT", "IT"),
-    "CAN": ("Canada", "CA", None),
-    "IND": ("India", "IN", None),
+    "USA": ("United States", "US", None, 840),
+    "CHN": ("China", "CN", None, 156),
+    "JPN": ("Japan", "JP", None, 392),
+    "DEU": ("Germany", "DE", "DE", 276),
+    "GBR": ("United Kingdom", "GB", None, 826),
+    "FRA": ("France", "FR", "FR", 250),
+    "ITA": ("Italy", "IT", "IT", 380),
+    "CAN": ("Canada", "CA", None, 124),
+    "IND": ("India", "IN", None, 356),
 }
+
+CPI = "OECD.SDD.TPS,DSD_PRICES@DF_PRICES_ALL,1.0"
+UNE = "OECD.SDD.TPS,DSD_LFS@DF_IALFS_UNE_M,1.0"
+STES_IND = "OECD.SDD.STES,DSD_STES@DF_INDSERV"
+STES_FIN = "OECD.SDD.STES,DSD_STES@DF_FINMARK"
+QNA = "OECD.SDD.NAD,DSD_NAMAIN1@DF_QNA"
+IMTS = "OECD.SDD.TPS,DSD_IMTS@DF_IMTS"
 
 
 def monthly_candidates(iso3):
-    """Return {indicator: [(kind, code), ...]} for one economy.
-    kinds: fred, fred_yoy, dbn, dbn_yoy (yoy = compute 12-month % change)."""
-    name, iso2, geo = ECONOMIES[iso3]
-    bis = "XM" if geo else iso2  # euro members share the ECB rate
-    c = {"gdp": [], "inflation": [], "unemployment": [], "industry": [], "policy_rate": [],
-         "long_rate": []}
-
-    if iso3 == "USA":
-        c["inflation"] += [("fred_yoy", "CPIAUCSL")]
-        c["unemployment"] += [("fred", "UNRATE")]
-        c["industry"] += [("fred_yoy", "INDPRO")]
-        c["policy_rate"] += [("fred", "FEDFUNDS")]
-        c["gdp"] += [("fred_yoyq", "GDPC1")]
-        c["long_rate"] += [("fred", "GS10")]
+    name, iso2, geo, _ = ECONOMIES[iso3]
+    c = {}
+    c["inflation"] = [("oecd_key", CPI, f"{iso3}.M.N.CPI.PA._T.N.GY", "level")]
     if geo:
-        c["inflation"] += [("dbn", f"Eurostat/prc_hicp_manr/M.RCH_A.CP00.{geo}")]
-        c["unemployment"] += [("dbn", f"Eurostat/une_rt_m/M.SA.TOTAL.PC_ACT.T.{geo}")]
-        c["industry"] += [("dbn_yoy", f"Eurostat/sts_inpr_m/M.PROD.B-D.SCA.I21.{geo}"),
-                          ("dbn_yoy", f"Eurostat/sts_inpr_m/M.PROD.B-D.SCA.I15.{geo}")]
-        c["gdp"] += [("dbn", f"Eurostat/namq_10_gdp/Q.CLV_PCH_SM.SCA.B1GQ.{geo}")]
-    # OECD mirrors on FRED (broad coverage; some may be stale -> skipped automatically)
-    c["gdp"] += [("fred", f"NAEXKP01{iso2}Q659S"), ("fred_yoyq", f"NGDPRSAXDC{iso2}Q")]
-    c["long_rate"] += [("fred", f"IRLTLT01{iso2}M156N")]
-    c["inflation"] += [("fred", f"CPALTT01{iso2}M659N")]
-    c["unemployment"] += [("fred", f"LRHUTTTT{iso2}M156S")]
-    c["industry"] += [("fred_yoy", f"PRINTO01{iso2}M661S")]
-    # BIS central bank policy rates via DBnomics
-    c["policy_rate"] += [("dbn", f"BIS/WS_CBPOL/M.{bis}"), ("dbn", f"BIS/WS_CBPOL_M/M.{bis}")]
+        c["inflation"] += [("dbn", f"Eurostat/prc_hicp_manr/M.RCH_A.CP00.{geo}", "level")]
+    c["inflation"] += [("wb", "FP.CPI.TOTL.ZG", "level")]
+
+    c["unemployment"] = [("oecd_key", UNE, f"{iso3}.UNE_LF_M.PT_LF_SUB._Z.Y._T.Y_GE15._Z.M", "level")]
+    if geo:
+        c["unemployment"] += [("dbn", f"Eurostat/une_rt_m/M.SA.TOTAL.PC_ACT.T.{geo}", "level")]
+    c["unemployment"] += [("wb", "SL.UEM.TOTL.ZS", "level")]
+
+    c["industry"] = [("oecd", STES_IND, {"REF_AREA": iso3, "FREQ": "M", "MEASURE": "PRVM"},
+                      {"ACTIVITY": ["BTE", "B-E", "C"], "ADJUSTMENT": ["Y", "S", "N"], "TRANSFORMATION": ["_Z", "N"]},
+                      "yoy")]
+    if geo:
+        c["industry"] += [("dbn", f"Eurostat/sts_inpr_m/M.{i}.B-D.SCA.{u}.{geo}", "yoy")
+                          for i in ("PRD", "PROD") for u in ("I21", "I15")]
+
+    c["gdp"] = [("oecd", QNA, {"FREQ": "Q", "REF_AREA": iso3, "SECTOR": "S1", "TRANSACTION": "B1GQ"},
+                 {"PRICE_BASE": ["LR", "L"], "ADJUSTMENT": ["Y", "S"], "TRANSFORMATION": ["N", "_Z"],
+                  "UNIT_MEASURE": ["XDC", "USD_PPP", "USD_EXC"]}, "yoyq")]
+    if geo:
+        c["gdp"] += [("dbn", f"Eurostat/namq_10_gdp/Q.CLV_PCH_SM.{sa}.B1GQ.{geo}", "level") for sa in ("SCA", "NSA")]
+    c["gdp"] += [("wb", "NY.GDP.MKTP.KD.ZG", "level")]
+
+    c["policy_rate"] = [("bis", "XM" if geo else iso2, "level"),
+                        ("oecd", STES_FIN, {"REF_AREA": iso3, "FREQ": "M", "MEASURE": "IRSTCI"}, {}, "level"),
+                        ("oecd", STES_FIN, {"REF_AREA": iso3, "FREQ": "M", "MEASURE": "IR3TIB"}, {}, "level")]
+    c["long_rate"] = [("oecd", STES_FIN, {"REF_AREA": iso3, "FREQ": "M", "MEASURE": "IRLT"}, {}, "level")]
+
+    # Monthly merchandise trade (value, US$): exports, imports, balance
+    trade_pref = {"COUNTERPART_AREA": ["W", "W00", "WLD"], "UNIT_MEASURE": ["USD", "USD_EXC"],
+                  "ADJUSTMENT": ["Y", "S", "N"], "TRANSFORMATION": ["_Z", "N"], "FREQ": ["M", "Q"]}
+    for ind, flow in (("exports", ["X", "C"]), ("imports", ["M", "D"]), ("trade_balance", ["B"])):
+        c[ind] = [("oecd", IMTS, {"REF_AREA": iso3, "FREQ": "M"}, {"_require": ["TRADE_FLOW", "FLOW"], "TRADE_FLOW": flow, "FLOW": flow, **trade_pref},
+                   "yoy" if ind != "trade_balance" else "usd_bn")]
     return c
 
 
-# Annual "vital signs" from the World Bank (people, health, structure). Always available.
+# Annual "vital signs" from the World Bank.
 VITALS = {
-    "population":        ("SP.POP.TOTL",       "Population", "people"),
-    "pop_growth":        ("SP.POP.GROW",       "Population growth", "%"),
-    "age65":             ("SP.POP.65UP.TO.ZS", "Aged 65+", "% of pop."),
-    "fertility":         ("SP.DYN.TFRT.IN",    "Births per woman", ""),
-    "life_exp":          ("SP.DYN.LE00.IN",    "Life expectancy", "years"),
-    "health_spend":      ("SH.XPD.CHEX.GD.ZS", "Health spending", "% of GDP"),
-    "net_migration":     ("SM.POP.NETM",       "Net migration", "people"),
-    "gdp_pc":            ("NY.GDP.PCAP.CD",    "GDP per person", "US$"),
-    "gdp_growth":        ("NY.GDP.MKTP.KD.ZG", "GDP growth", "%"),
-    "inflation_a":       ("FP.CPI.TOTL.ZG",    "Inflation (annual)", "%"),
-    "unemployment_a":    ("SL.UEM.TOTL.ZS",    "Unemployment (annual)", "%"),
-    "trade_open":        ("NE.TRD.GNFS.ZS",    "Trade", "% of GDP"),
-    "gini":              ("SI.POV.GINI",       "Inequality (Gini)", "0-100"),
+    "population":     ("SP.POP.TOTL",       "Population", "people"),
+    "pop_growth":     ("SP.POP.GROW",       "Population growth", "%"),
+    "age65":          ("SP.POP.65UP.TO.ZS", "Aged 65+", "% of pop."),
+    "fertility":      ("SP.DYN.TFRT.IN",    "Births per woman", ""),
+    "life_exp":       ("SP.DYN.LE00.IN",    "Life expectancy", "years"),
+    "health_spend":   ("SH.XPD.CHEX.GD.ZS", "Health spending", "% of GDP"),
+    "net_migration":  ("SM.POP.NETM",       "Net migration", "people"),
+    "gdp_pc":         ("NY.GDP.PCAP.CD",    "GDP per person", "US$"),
+    "gini":           ("SI.POV.GINI",       "Inequality (Gini)", "0-100"),
+    "urban":          ("SP.URB.TOTL.IN.ZS", "Urban population", "% of pop."),
 }
 
-# Commodity and freight prices (FRED). Grouped by the ship type that carries them.
-PRICES = {
-    "Brent crude":        ("DCOILBRENTEU",    "tanker"),
-    "WTI crude":          ("DCOILWTICO",      "tanker"),
-    "US natural gas":     ("DHHNGSP",         "tanker"),
-    "Asia LNG":           ("PNGASJPUSDM",     "tanker"),
-    "Iron ore":           ("PIORECRUSDM",     "dry_bulk"),
-    "Coal":               ("PCOALAUUSDM",     "dry_bulk"),
-    "Wheat":              ("PWHEAMTUSDM",     "dry_bulk"),
-    "Soybeans":           ("PSOYBUSDM",       "dry_bulk"),
-    "Copper":             ("PCOPPUSDM",       "dry_bulk"),
-    "US import prices":   ("IR",              "container"),
-    "Ocean freight cost": ("PCU483111483111", None),
-    "Truckload cost":     ("PCU484121484121", None),
+# Annual fundamentals. "weo" = IMF World Economic Outlook via DBnomics (incl. current-year estimates).
+WEO_RELEASES = ["WEO:latest", "WEO:2026-10", "WEO:2026-04", "WEO:2025-10", "WEO:2025-04"]
+FUNDAMENTALS = {
+    "gdp_usd":         ("GDP", "US$", [("weo", "NGDPD.us_dollars", 1e9), ("wb", "NY.GDP.MKTP.CD", 1)]),
+    "gov_debt":        ("Government debt", "% of GDP", [("weo", "GGXWDG_NGDP.pcent_gdp", 1), ("wb", "GC.DOD.TOTL.GD.ZS", 1)]),
+    "gov_balance":     ("Budget balance", "% of GDP", [("weo", "GGXCNL_NGDP.pcent_gdp", 1), ("wb", "GC.NLD.TOTL.GD.ZS", 1)]),
+    "primary_balance": ("Primary balance", "% of GDP", [("weo", "GGXONLB_NGDP.pcent_gdp", 1)]),
+    "revenue":         ("Government revenue", "% of GDP", [("weo", "GGR_NGDP.pcent_gdp", 1), ("wb", "GC.REV.XGRT.GD.ZS", 1)]),
+    "spending":        ("Government spending", "% of GDP", [("weo", "GGX_NGDP.pcent_gdp", 1), ("wb", "GC.XPN.TOTL.GD.ZS", 1)]),
+    "current_account": ("Current account", "% of GDP", [("weo", "BCA_NGDPD.pcent_gdp", 1), ("wb", "BN.CAB.XOKA.GD.ZS", 1)]),
+    "exports_usd":     ("Exports", "US$", [("wb", "NE.EXP.GNFS.CD", 1)]),
+    "imports_usd":     ("Imports", "US$", [("wb", "NE.IMP.GNFS.CD", 1)]),
+    "net_exports":     ("Net exports", "% of GDP", [("wb", "NE.RSB.GNFS.ZS", 1)]),
+    "consumption":     ("Household consumption (C)", "% of GDP", [("wb", "NE.CON.PRVT.ZS", 1)]),
+    "investment":      ("Investment (I)", "% of GDP", [("wb", "NE.GDI.TOTL.ZS", 1)]),
+    "gov_consumption": ("Government consumption (G)", "% of GDP", [("wb", "NE.CON.GOVT.ZS", 1)]),
+    "savings":         ("National savings (S)", "% of GDP", [("weo", "NGSD_NGDP.pcent_gdp", 1), ("wb", "NY.GNS.ICTR.ZS", 1)]),
+    "reserves_usd":    ("FX reserves", "US$", [("wb", "FI.RES.TOTL.CD", 1)]),
+    "reserves_months": ("Reserves", "months of imports", [("wb", "FI.RES.TOTL.MO", 1)]),
+    "private_credit":  ("Bank credit to private sector", "% of GDP", [("wb", "FS.AST.PRVT.GD.ZS", 1)]),
 }
 
-# US high-frequency activity (FRED). Public-domain series only on the public site.
-US_FAST = {
-    "Jobless claims (weekly)": "ICSA",
-    "Rail carloads":           "RAILFRTCARLOADSD11",
-    "Rail intermodal":         "RAILFRTINTERMODAL",
-    "Freight services index":  "TSIFRGHT",
-    "Consumer sentiment":      "UMCSENT",
-}
+# World Bank Pink Sheet columns (matched by prefix, case-insensitive) -> (display name, ship type)
+COMMODITIES = [
+    ("Crude oil, Brent", "Brent crude", "tanker"),
+    ("Crude oil, WTI", "WTI crude", "tanker"),
+    ("Natural gas, US", "US natural gas", "tanker"),
+    ("Natural gas, Europe", "Europe natural gas", "tanker"),
+    ("Liquefied natural gas, Japan", "Asia LNG", "tanker"),
+    ("Coal, Australia", "Coal", "dry_bulk"),
+    ("Iron ore", "Iron ore", "dry_bulk"),
+    ("Copper", "Copper", "dry_bulk"),
+    ("Aluminum", "Aluminum", "dry_bulk"),
+    ("Nickel", "Nickel", "dry_bulk"),
+    ("Wheat, US HRW", "Wheat", "dry_bulk"),
+    ("Maize", "Corn", "dry_bulk"),
+    ("Rice, Thai 5", "Rice", "dry_bulk"),
+    ("Soybeans", "Soybeans", "dry_bulk"),
+    ("Sugar, world", "Sugar", "dry_bulk"),
+    ("Coffee, Arabica", "Coffee", "container"),
+    ("Cocoa", "Cocoa", "container"),
+    ("Cotton", "Cotton", "container"),
+    ("Beef", "Beef", "container"),
+    ("Urea", "Fertilizer (urea)", "dry_bulk"),
+    ("Gold", "Gold", None),
+    ("Silver", "Silver", None),
+]
 
-# Port regions (ISO3 lists). Top ports by traffic are picked automatically.
+# ECB reference rates (per EUR). Shown as per US dollar unless noted.
+FX = ["USD", "GBP", "JPY", "CNY", "INR", "CAD", "CHF", "KRW", "MXN", "BRL", "AUD", "ZAR", "TRY"]
+FX_NAMES = {"EUR": "Euro (USD per EUR)", "GBP": "British pound (USD per GBP)", "JPY": "Japanese yen",
+            "CNY": "Chinese yuan", "INR": "Indian rupee", "CAD": "Canadian dollar", "CHF": "Swiss franc",
+            "KRW": "Korean won", "MXN": "Mexican peso", "BRL": "Brazilian real", "AUD": "Australian dollar",
+            "ZAR": "South African rand", "TRY": "Turkish lira"}
+
+# PortWatch
 REGIONS = {
     "China": ["CHN", "HKG"], "NE Asia": ["JPN", "KOR", "TWN"],
     "SE Asia": ["SGP", "MYS", "VNM", "THA", "IDN", "PHL"],
     "South Asia": ["IND", "PAK", "BGD", "LKA"], "Middle East": ["ARE", "SAU", "OMN", "QAT"],
     "Europe": ["NLD", "BEL", "DEU", "ESP", "FRA", "ITA", "GBR", "GRC", "POL"],
-    "US": ["USA"], "LatAm": ["BRA", "MEX", "CHL", "PER", "COL", "PAN"],
+    "US": ["USA"], "Canada": ["CAN"], "LatAm": ["BRA", "MEX", "CHL", "PER", "COL", "PAN"],
     "Africa": ["ZAF", "EGY", "MAR", "NGA", "KEN"],
 }
-PORTS_PER_REGION = 5
-PORTS_PER_ECONOMY = 4
-PRODUCTS = {
-    "tanker": "Oil, fuel, gas, chemicals",
-    "container": "Manufactured goods",
-    "dry_bulk": "Ores, coal, grain",
-    "general_cargo": "Steel, project cargo",
-    "roro": "Vehicles",
-}
+PORTS_PER_REGION, PORTS_PER_ECONOMY = 5, 4
+PRODUCTS = {"tanker": "Oil, fuel, gas, chemicals", "container": "Manufactured goods",
+            "dry_bulk": "Ores, coal, grain", "general_cargo": "Steel, project cargo", "roro": "Vehicles"}
+# id: (name, lon, lat)
 CHOKEPOINTS = {
-    "chokepoint1": "Suez Canal", "chokepoint2": "Panama Canal", "chokepoint3": "Bosporus",
-    "chokepoint4": "Bab el-Mandeb", "chokepoint5": "Malacca Strait", "chokepoint6": "Strait of Hormuz",
-    "chokepoint7": "Cape of Good Hope", "chokepoint8": "Gibraltar", "chokepoint9": "Dover Strait",
-    "chokepoint10": "Oresund", "chokepoint11": "Taiwan Strait", "chokepoint12": "Korea Strait",
-    "chokepoint13": "Tsugaru Strait", "chokepoint14": "Luzon Strait", "chokepoint15": "Lombok Strait",
-    "chokepoint16": "Ombai Strait", "chokepoint17": "Bohai Strait", "chokepoint18": "Torres Strait",
-    "chokepoint19": "Sunda Strait", "chokepoint20": "Makassar Strait", "chokepoint21": "Magellan Strait",
-    "chokepoint22": "Yucatan Channel", "chokepoint23": "Windward Passage", "chokepoint24": "Mona Passage",
+    "chokepoint1": ("Suez Canal", 32.35, 30.6), "chokepoint2": ("Panama Canal", -79.7, 9.1),
+    "chokepoint3": ("Bosporus", 29.05, 41.1), "chokepoint4": ("Bab el-Mandeb", 43.4, 12.6),
+    "chokepoint5": ("Malacca Strait", 100.4, 3.2), "chokepoint6": ("Strait of Hormuz", 56.4, 26.6),
+    "chokepoint7": ("Cape of Good Hope", 18.5, -34.4), "chokepoint8": ("Gibraltar", -5.6, 35.95),
+    "chokepoint9": ("Dover Strait", 1.45, 51.0), "chokepoint10": ("Oresund", 12.7, 55.9),
+    "chokepoint11": ("Taiwan Strait", 119.5, 24.3), "chokepoint12": ("Korea Strait", 129.0, 34.5),
+    "chokepoint13": ("Tsugaru Strait", 140.6, 41.5), "chokepoint14": ("Luzon Strait", 121.0, 20.5),
+    "chokepoint15": ("Lombok Strait", 115.7, -8.6), "chokepoint16": ("Ombai Strait", 125.0, -8.4),
+    "chokepoint17": ("Bohai Strait", 121.0, 38.3), "chokepoint18": ("Torres Strait", 142.4, -10.3),
+    "chokepoint19": ("Sunda Strait", 105.8, -6.0), "chokepoint20": ("Makassar Strait", 118.0, -2.0),
+    "chokepoint21": ("Magellan Strait", -70.5, -53.5), "chokepoint22": ("Yucatan Channel", -85.8, 21.8),
+    "chokepoint23": ("Windward Passage", -73.9, 20.0), "chokepoint24": ("Mona Passage", -67.8, 18.3),
 }
-WINDOW_DAYS = 28   # YoY comparison window for port/chokepoint data
-LAG_DAYS = 10      # PortWatch fills in late; ignore the most recent days
+WINDOW_DAYS, LAG_DAYS = 28, 10
 
-
-# Markets: daily/monthly series from FRED. Shown as latest, 1-month and 1-year change.
-# NOTE: equity index levels are licensed by their owners (S&P, Nasdaq, Nikkei). We show
-# % changes only, with attribution. Review before any commercial use.
-MARKETS = {
-    "FX (per US dollar unless noted)": {
-        "Euro (USD per EUR)": "DEXUSEU", "British pound (USD per GBP)": "DEXUSUK",
-        "Japanese yen": "DEXJPUS", "Chinese yuan": "DEXCHUS", "Indian rupee": "DEXINUS",
-        "Canadian dollar": "DEXCAUS", "Swiss franc": "DEXSZUS", "Korean won": "DEXKOUS",
-        "Mexican peso": "DEXMXUS", "Brazilian real": "DEXBZUS",
-        "Broad dollar index": "DTWEXBGS",
-    },
-    "US rates": {
-        "Fed funds": "DFF", "3-month T-bill": "DTB3", "2-year Treasury": "DGS2",
-        "10-year Treasury": "DGS10", "30-year Treasury": "DGS30",
-        "10y minus 2y spread": "T10Y2Y", "30-year mortgage": "MORTGAGE30US",
-        "High-yield credit spread": "BAMLH0A0HYM2", "Inflation expectations (10y)": "T10YIE",
-    },
-    "Equity indices": {
-        "S&P 500": "SP500", "Nasdaq Composite": "NASDAQCOM", "Dow Jones": "DJIA",
-        "Nikkei 225": "NIKKEI225", "VIX (volatility)": "VIXCLS",
-    },
-    "More commodities": {
-        "Aluminum": "PALUMUSDM", "Nickel": "PNICKUSDM", "Corn": "PMAIZMTUSDM",
-        "Rice": "PRICENPQUSDM", "Sugar": "PSUGAISAUSDM", "Coffee": "PCOFFOTMUSDM",
-        "Cotton": "PCOTTINDUSDM", "Beef": "PBEEFUSDQ", "Natural gas (Europe)": "PNGASEUUSDM",
-        "Fertilizer (urea)": "PUREAUSDM",
-    },
-}
+# ISO3 -> ISO numeric (for the world map; covers every country we may color)
+ISO_NUM = {"USA": 840, "CHN": 156, "JPN": 392, "DEU": 276, "GBR": 826, "FRA": 250, "ITA": 380, "CAN": 124,
+           "IND": 356, "HKG": 344, "KOR": 410, "TWN": 158, "SGP": 702, "MYS": 458, "VNM": 704, "THA": 764,
+           "IDN": 360, "PHL": 608, "PAK": 586, "BGD": 50, "LKA": 144, "ARE": 784, "SAU": 682, "OMN": 512,
+           "QAT": 634, "NLD": 528, "BEL": 56, "ESP": 724, "GRC": 300, "POL": 616, "BRA": 76, "MEX": 484,
+           "CHL": 152, "PER": 604, "COL": 170, "PAN": 591, "ZAF": 710, "EGY": 818, "MAR": 504, "NGA": 566,
+           "KEN": 404, "AUS": 36, "TUR": 792, "RUS": 643}
