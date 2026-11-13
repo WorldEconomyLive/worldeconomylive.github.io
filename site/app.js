@@ -1201,8 +1201,13 @@
     const a = byId[id], n = a && a.parentNode;
     if (n && n.scrollWidth > n.clientWidth) n.scrollTo({ left: a.offsetLeft - n.offsetLeft - n.clientWidth / 2 + a.offsetWidth / 2, behavior: 'smooth' }); };
   let ticking = false;
+  // the line a section must pass to count as current is fixed at the header's tallest height (with the change-over row),
+  // so the header growing or shrinking can never flip the current section back and forth
+  let HMAX = 0;
+  addEventListener('resize', () => { HMAX = 0; });
   const pick = () => { ticking = false; let cur = secs[0]?.id;
-    const lim = document.querySelector('header.bar').offsetHeight + 12;
+    HMAX = Math.max(HMAX, document.querySelector('header.bar').offsetHeight);
+    const lim = HMAX + 12;
     for (const sec of secs) if (sec.getBoundingClientRect().top <= lim) cur = sec.id;
     if (cur) set(cur); };
   addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(pick); } }, { passive: true });

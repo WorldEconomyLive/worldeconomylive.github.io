@@ -136,3 +136,4 @@ td[style*="text-align: left"] .spk{margin-left:0}td[style*="text-align: left"] .
 .layers{left:440px}
 .hero.lbottom .layers{top:auto;left:22px;right:22px;bottom:46px;justify-content:center}
 @media (max-width:760px){.layers{left:12px}}
+html,body{overflow-anchor:none}
