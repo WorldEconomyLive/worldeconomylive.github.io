@@ -41,7 +41,7 @@ def fake_batch(spec, areas, start="2012-01"):
             s = pd.Series(rng.uniform(10, 200, len(months)) * 1e3, index=months)
         else:
             s = pd.Series(100 + np.cumsum(rng.normal(0.1, 0.8, len(months))), index=months)
-        out[a] = (s, {"UNIT_MULT": "6"} if "IMTS" in f else {})
+        out[a] = (s, {"UNIT_MULT": "6"} if "IMTS" in f else {"BASE_PER": "2015"} if spec.get("filters", {}).get("MEASURE") == "SHARE" else {})
     return out
 
 

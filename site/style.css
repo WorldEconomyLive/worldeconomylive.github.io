@@ -22,7 +22,7 @@ section[id]{scroll-margin-top:calc(var(--hdr,104px) + 6px)}
 .score{font-size:96px;font-weight:200;letter-spacing:-.04em;line-height:1}.score small{font-size:18px;color:var(--mute);margin-left:4px;letter-spacing:0}
 .headline{font-size:18px;font-weight:400;margin:14px 0 0;color:var(--ink)}
 .pill{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;padding:3px 9px;border-radius:99px;border:1px solid var(--line2);color:var(--ink2);margin-top:8px}
-.Strong{color:var(--pos);border-color:rgba(62,230,196,.45)}.Steady{color:#8fb8ff;border-color:rgba(79,140,255,.45)}.Soft{color:var(--warm);border-color:rgba(255,179,71,.45)}.Stressed{color:var(--neg);border-color:rgba(255,77,109,.5)}
+.Strong{color:var(--pos);border-color:rgba(62,230,196,.45)}.Steady{color:#8fb8ff;border-color:rgba(79,140,255,.45)}.Subdued,.Soft{color:var(--warm);border-color:rgba(255,179,71,.45)}.Stressed{color:var(--neg);border-color:rgba(255,77,109,.5)}
 .layers{position:absolute;right:22px;top:22px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .layers button{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;background:rgba(0,0,0,.6);color:var(--ink2);border:1px solid var(--line2);padding:6px 11px;border-radius:99px;cursor:pointer}
 .layers button.on{color:#000;background:var(--ink);border-color:var(--ink)}
@@ -132,3 +132,7 @@ body.navtight nav{gap:10px}body.navtight nav a{letter-spacing:.02em;font-size:10
 .pctl{display:inline-block;width:46px;height:5px;background:#16181c;border-radius:3px;vertical-align:middle;overflow:hidden;margin-right:4px}.pctl i{display:block;height:100%;background:var(--ink2)}
 .sub2{font-size:11px;color:var(--mute);margin-top:2px}
 td[style*="text-align: left"] .spk{margin-left:0}td[style*="text-align: left"] .mixbar{margin-left:0}
+/* map layer buttons never run into the world score: beside it on wide screens, along the bottom of the map otherwise */
+.layers{left:440px}
+@media (max-width:1240px) and (min-width:761px){.layers{top:auto;left:22px;right:22px;bottom:46px;justify-content:center}}
+@media (max-width:760px){.layers{left:12px}}

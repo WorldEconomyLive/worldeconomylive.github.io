@@ -143,6 +143,9 @@ def fallback_series(cand, iso3):
     raise RuntimeError(kind)
 
 
+SHARE_BASE: dict = {}
+
+
 def macro_block():
     areas = list(R.ECONOMIES)
     batch = {}
@@ -154,6 +157,10 @@ def macro_block():
             got = S.oecd_batch(spec, areas)
             res, raw = {}, {}
             for iso3, (s, attrs) in got.items():
+                if ind == "share_prices":       # the index base year, as the OECD labels it (e.g. 2015 = 100)
+                    bp = next((str(attrs[k]) for k in ("BASE_PER", "BASE_YEAR", "BASE_PERIOD") if k in attrs and str(attrs[k]) not in ("", "nan")), None)
+                    if bp:
+                        SHARE_BASE[iso3] = bp[:4]
                 s = transform(s, spec["transform"], attrs).dropna()
                 b = spec.get("bounds")
                 if len(s):
@@ -221,6 +228,7 @@ def macro_block():
                                         "spark": [] if annual else spark(s, 20 if q else 24, "QS" if q else "MS")}
                 if ind == "share_prices" and not annual:
                     e["indicators"][ind]["pct10"] = price_stats(s)["pct10"]
+                    e["indicators"][ind]["base"] = SHARE_BASE.get(iso3)
         b = bis.get("XM" if iso3 in R.EURO else iso2)
         rawe["bis"] = b
         if b is not None and age_months(b) <= R.MAX_STALE_MONTHS:
@@ -922,7 +930,7 @@ def ports_block():
 def label(score):
     if score is None:
         return "Pending"
-    return "Strong" if score >= 60 else "Steady" if score >= 45 else "Soft" if score >= 35 else "Stressed"
+    return "Strong" if score >= 60 else "Steady" if score >= 45 else "Subdued" if score >= 35 else "Stressed"
 
 
 PILLAR_NAMES = {"activity": "Output", "labor": "Jobs", "prices": "Prices", "trade": "Trade"}
@@ -1206,7 +1214,7 @@ def annual_export(map_rows):
             "rel": {k: v for k, v in S.REL.items() if k == "weo" or k.startswith("wb:")}}
 
 
-BAND_WORDS = {"Strong": "strong", "Steady": "steady", "Soft": "soft", "Stressed": "under stress"}
+BAND_WORDS = {"Strong": "strong", "Steady": "steady", "Subdued": "subdued", "Stressed": "under stress"}
 PILLAR_WORD = {"activity": "output", "labor": "jobs", "prices": "prices", "trade": "trade"}
 
 
@@ -1279,7 +1287,7 @@ def write_packs(rb, hist, days, data):
             "max_stale": R.MAX_STALE_MONTHS, "fresh": R.FRESH_MONTHS, "window": R.WINDOW_DAYS, "lag_days": R.LAG_DAYS,
             "econ": {k: v[0] for k, v in R.ECONOMIES.items()}, "g20": R.G20, "euro": sorted(R.EURO),
             "fx": R.FX, "fx_names": R.FX_NAMES, "fx_units": R.FX_UNITS, "fx_base_foreign": sorted(R.FX_BASE_IS_FOREIGN),
-            "fx_note": data["markets"].get("fx_note"), "commodities": R.COMMODITIES, "commodity_basis": R.COMMODITY_BASIS,
+            "fx_note": data["markets"].get("fx_note"), "commodities": R.COMMODITIES, "commodity_basis": R.COMMODITY_BASIS, "share_base": SHARE_BASE,
             "chokepoints": R.CHOKEPOINTS, "regions": R.REGIONS, "products": R.PRODUCTS, "vital_keys": R.VITAL_KEYS,
             "weo": {k: [v[1], v[2]] for k, v in R.WEO.items()}, "wb": {k: [v[0], v[1], v[2]] for k, v in R.WB.items()}, "wb_fallback": R.WB_FALLBACK,
             "annual_kind": ANNUAL_KIND, "ind_kind": IND_KIND, "math_kind": MATH_KIND,
@@ -1346,7 +1354,8 @@ def main():
             sp = I.get("share_prices")
             markets["global_rates"].append({
                 "stocks": None if not sp or sp.get("annual") else {"chg": sp["chg"], "spark": sp["spark"], "pct10": sp.get("pct10"),
-                                                                    "date": sp["date"], "rel": sp["rel"]},
+                                                                    "date": sp["date"], "rel": sp["rel"], "level": sp["latest"],
+                                                                    "base": sp.get("base")},
                 "name": e["name"], "iso3": e["iso3"], "policy": I.get("policy_rate", {}).get("latest"),
                 "policy_src": I.get("policy_rate", {}).get("source"), "long": I.get("long_rate", {}).get("latest"),
                 "real": real_rate_any(e), "real_est": e["math"].get("real_rate") is None and real_rate_any(e) is not None,
