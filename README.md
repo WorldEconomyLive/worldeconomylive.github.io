@@ -21,7 +21,8 @@ Any push that changes `pipeline/` or `site/` also triggers a run.
 | Debt, deficits, current account (incl. current-year estimates) | IMF World Economic Outlook (IMF DataMapper, then the IMF data portal; DBnomics mirror as a flagged fallback) |
 | Growth, inflation, unemployment, GDP where the IMF has no series (e.g. Greenland) | World Bank WDI (CC BY 4.0) |
 | People, health, GDP composition, trade in US$ | World Bank WDI (CC BY 4.0) |
-| Commodity prices | World Bank Commodity Price Data, "Pink Sheet" (CC BY 4.0) |
+| Commodity cash prices (monthly averages) | World Bank Commodity Price Data, "Pink Sheet" (CC BY 4.0) |
+| Futures positioning (open interest, funds net) | U.S. CFTC Commitments of Traders (public domain) |
 | Exchange rates | European Central Bank reference rates |
 | US Treasury yields, real yields, federal debt | U.S. Department of the Treasury |
 | Effective fed funds rate | Federal Reserve Bank of New York |

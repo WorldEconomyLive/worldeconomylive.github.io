@@ -129,3 +129,5 @@ td .chg{font-size:10px}
 .perbar>*:not(.asofban){flex-shrink:0;white-space:nowrap}.perbar .plab{white-space:nowrap}
 body.navtight nav{gap:10px}body.navtight nav a{letter-spacing:.02em;font-size:10.5px}body.navtight .upd{display:none}body.navtight .brand{letter-spacing:.12em}
 .foot.fc p{margin:3px 0}.foot.fc b{font-weight:500;color:var(--ink2)}
+.pctl{display:inline-block;width:46px;height:5px;background:#16181c;border-radius:3px;vertical-align:middle;overflow:hidden;margin-right:4px}.pctl i{display:block;height:100%;background:var(--ink2)}
+.sub2{font-size:11px;color:var(--mute);margin-top:2px}

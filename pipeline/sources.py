@@ -791,6 +791,33 @@ def ember_monthly() -> pd.DataFrame:
     raise RuntimeError(last or "ember unavailable")
 
 
+# ---------------- CFTC Commitments of Traders (U.S. government work, public domain) ----------------
+def cftc_cot(codes, dataset, since):
+    """Weekly futures-only positions for the given contract market codes since a date.
+    Columns: code, date, oi, mm_long, mm_short, name (the CFTC's own market and exchange name)."""
+    q = ",".join(f"'{c}'" for c in codes)
+    url = (f"https://publicreporting.cftc.gov/resource/{dataset}.json?$limit=50000"
+           f"&$where=cftc_contract_market_code%20in({requests.utils.quote(q)})%20AND%20report_date_as_yyyy_mm_dd%20>=%20'{since}'"
+           f"&$order=report_date_as_yyyy_mm_dd")
+    j = _get(url, timeout=120).json()
+    if not isinstance(j, list) or not j:
+        raise RuntimeError("no rows")
+    pick = lambda d, *ks: next((d[k] for k in ks if k in d), None)   # noqa: E731
+    rows = [{"code": str(pick(d, "cftc_contract_market_code")), "date": pd.Timestamp(str(pick(d, "report_date_as_yyyy_mm_dd"))[:10]),
+             "oi": pick(d, "open_interest_all"), "mm_long": pick(d, "m_money_positions_long_all"),
+             "mm_short": pick(d, "m_money_positions_short_all"), "name": pick(d, "market_and_exchange_names")} for d in j]
+    df = pd.DataFrame(rows)
+    for c in ("oi", "mm_long", "mm_short"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna(subset=["oi"]).sort_values(["code", "date"])
+    if df.code.nunique() < 3:
+        raise RuntimeError(f"only {df.code.nunique()} markets")
+    last = df.date.max()
+    set_rel("cftc", "U.S. Commodity Futures Trading Commission", (last + pd.Timedelta(days=3)).strftime("%Y-%m-%d"),
+            label="Commitments of Traders")
+    return df
+
+
 # ---------------- Electricity by source, yearly (Ember, CC BY 4.0) ----------------
 EMBER_YEARLY_URLS = [
     "https://files.ember-energy.org/public-downloads/generation/outputs/release_generation_yearly_global.csv",

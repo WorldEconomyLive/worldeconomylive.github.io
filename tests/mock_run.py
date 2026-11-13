@@ -54,6 +54,12 @@ S.bis_batch = lambda codes: {c: pd.Series(3 + rng.normal(0, 0.2, len(months)), i
 WB_ONLY = ["XKX", "GRL"]      # World Bank has them, the (mock) IMF WEO does not: fallbacks + Kosovo map match
 S.worldbank_all = lambda ind, since=2005: pd.DataFrame([{"iso3": i, "year": y, "value": float(rng.uniform(1, 80)) * (1e11 if "CD" in ind else 1)} for i in set(ALL) | set(WB_ONLY) for y in range(2003, 2026)])
 S.owid_grapher = lambda slug: pd.DataFrame([{"iso3": i, "year": y, "value": float(rng.uniform(0.3, 9)) * (1e4 if "gdp" in slug else 1)} for i in set(ALL) | {"XKX"} for y in range(1960, 2024)])
+def fake_cot(codes, dataset, since):
+    wk = pd.date_range(since, today, freq="W-TUE")
+    S.set_rel("cftc", "U.S. Commodity Futures Trading Commission", str((wk[-1] + pd.Timedelta(days=3)).date()), label="Commitments of Traders")
+    return pd.DataFrame([{"code": c, "date": d, "oi": 4e5 + 2e4 * np.sin(k / 9) + rng.normal(0, 5e3), "mm_long": 1.2e5 + rng.normal(0, 1e4), "mm_short": 6e4 + rng.normal(0, 1e4), "name": c}
+                         for c in codes[:-2] for k, d in enumerate(wk)])
+S.cftc_cot = fake_cot
 S.eia_energy = lambda: pd.DataFrame([{"iso3": i, "year": y, "fuel": f, "qbtu": float(rng.uniform(0.1, 5))} for i in set(ALL) | {"XKX"} for y in range(1990, 2024) for f in ("oil", "gas", "coal", "nuclear", "renewables")])
 S.ember_yearly = lambda: pd.DataFrame([{"iso3": i, "year": y, "source": f, "twh": float(rng.uniform(0, 50))} for i in set(ALL) for y in range(2000, 2026) for f in S.ELEC_SOURCES.values()])
 S.EMBER_CLEAN["df"] = pd.DataFrame([{"iso3": i, "year": y, "value": float(rng.uniform(5, 95))} for i in set(ALL) for y in range(2005, 2026)])

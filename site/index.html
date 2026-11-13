@@ -15,7 +15,7 @@
 <header class="bar">
   <div class="brand"><span class="dot"></span>WORLD ECONOMY <b>LIVE</b></div>
   <nav>
-    <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Balances</a><a href="#years">Years</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#development">Development</a><a href="#method">Method</a>
+    <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Balances</a><a href="#years">Yearly</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#development">Development</a><a href="#method">Method</a>
   </nav>
   <button class="navbtn mono" id="navbtn" type="button" aria-expanded="false" aria-label="Sections">Sections ▾</button>
   <div class="upd mono" id="upd">—</div>
@@ -123,9 +123,14 @@
 
   <section id="commodities">
     <h2><span>08</span>Commodities</h2>
-    <p class="sub">Monthly prices, World Bank Pink Sheet, with the change over the selected period.</p>
-    <div id="prices"></div>
+    <h3>Cash prices</h3>
+    <p class="sub">Physical (spot) benchmark prices, averaged over each month, from the World Bank Pink Sheet; not futures. Change over the selected period, the range of the last 12 monthly averages, and where the latest price sits against the last 10 years (0 = lowest, 100 = highest).</p>
+    <div class="tbl" id="prices"></div>
     <div id="f-prices"></div>
+    <h3>Futures markets</h3>
+    <p class="sub">Positioning in the main US-traded futures, from the CFTC's weekly Commitments of Traders report. Open interest is the number of contracts still open; funds net is the long minus short positions of money managers (hedge funds and other speculators) as a share of open interest, so positive means funds are betting on higher prices. Futures prices and trading volumes are licensed by the exchanges and are not shown.</p>
+    <div class="tbl" id="futures"></div>
+    <div id="f-futures"></div>
     <h3>Sea cargo by ship type</h3>
     <p class="sub">Tonnes handled at the world's busiest ports (IMF PortWatch sample), the latest 28 days vs the same 28 days 1 or more years earlier (seasonal data, so 1Y and longer). Ship type, not individual commodity: a tanker figure covers crude, fuel, gas and chemicals together.</p>
     <div class="bars" id="shiptypes"></div>
@@ -204,6 +209,7 @@
         <li><b>Federal Reserve Bank of New York</b>: effective federal funds rate. The Effective Federal Funds Rate is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the Effective Federal Funds Rate by World Economy Live, does not sanction or endorse any particular republication, and has no liability for your use.</li>
         <li><b>U.S. Department of the Treasury</b> (daily yield curves; Fiscal Data: Debt to the Penny, Monthly Treasury Statement) and <b>U.S. Bureau of Transportation Statistics</b>: U.S. government works, public domain.</li>
         <li><b>Ember</b>: monthly and yearly electricity data, CC BY 4.0 (electricity demand; electricity generation by source; low-carbon share).</li>
+        <li><b>U.S. Commodity Futures Trading Commission</b>: Commitments of Traders (weekly futures positioning), a U.S. government work in the public domain. Futures prices and volumes belong to the exchanges (CME Group, ICE, LME) and are not shown.</li>
         <li><b>U.S. Energy Information Administration</b>: International Energy Statistics, energy consumption by fuel (oil, gas, coal, nuclear, renewables), a U.S. government work in the public domain.</li>
         <li><b>Our World in Data</b> (its processing CC BY 4.0; each series keeps its original licence): Maddison Project Database 2023 (Bolt and van Zanden, CC BY 4.0), Penn World Table 11.0 (Feenstra, Inklaar and Timmer, CC BY 4.0), UNDP Human Development Report (CC BY 3.0 IGO), Global Carbon Project, Global Carbon Budget (CC BY 4.0), and Jones et al., National contributions to climate change (CC BY 4.0).</li>
         <li><b>Figures the World Bank republishes</b> in World Development Indicators: FAO (undernourishment, CC BY 4.0), ILO modelled estimates (labour force, CC BY 4.0), UN IGME (child mortality), World Bank Poverty and Inequality Platform, and UNESCO Institute for Statistics (R&amp;D spending, CC BY-SA 3.0 IGO; this site's changes to it are limited to selecting the latest year and the year about 10 years earlier).</li>

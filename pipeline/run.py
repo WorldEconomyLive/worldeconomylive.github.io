@@ -617,7 +617,48 @@ def prices_block():
             continue
         rows.append({"name": name, "ship": ship, "level": float(s.iloc[-1]), "date": s.index[-1],
                      "unit": unit, "m1": pct(float(s.iloc[-1]), float(s.iloc[-2])), "chg": chg(s, "pct"), "rel": "pink",
-                     "yoy": pct(float(s.iloc[-1]), value_ago(s, 360)), "spark": spark(s, 24)})
+                     "yoy": pct(float(s.iloc[-1]), value_ago(s, 360)), "spark": spark(s, 24), **price_stats(s),
+                     "basis": R.COMMODITY_BASIS.get(name, ("", "cash"))[0], "kind": R.COMMODITY_BASIS.get(name, ("", "cash"))[1]})
+    return rows
+
+
+def price_stats(s):
+    """12-month low and high of the monthly averages (latest included) and the latest price's percentile among the
+    last 120 monthly averages (0 = lowest of the decade, 100 = highest). Mirrored in engine.js."""
+    v = s.dropna().values.astype(float)
+    w12, w120 = v[-12:], v[-120:]
+    pc = float((w120 < v[-1]).sum() + 0.5 * ((w120 == v[-1]).sum() - 1)) / (len(w120) - 1) * 100 if len(w120) >= 24 else None
+    return {"lo12": float(w12.min()), "hi12": float(w12.max()), "pct10": None if pc is None else round(pc, 1)}
+
+
+def futures_block():
+    """Futures positioning from the CFTC's weekly Commitments of Traders: open interest, its 1-week and 1-year change,
+    and managed money (funds) net position as a share of open interest, with its percentile over the past 3 years."""
+    since = (TODAY - pd.DateOffset(years=3, weeks=6)).strftime("%Y-%m-%d")
+    try:
+        df = S.cftc_cot([c for c, _, _ in R.CFTC], R.CFTC_DATASET, since)
+        S.log("cftc.cot", True, f"{df.code.nunique()} markets, week of {df.date.max():%Y-%m-%d}")
+    except Exception as e:
+        S.log("cftc.cot", False, e)
+        return []
+    RAW["cftc"] = {c: g.set_index("date")[["oi", "mm_long", "mm_short"]] for c, g in df.groupby("code")}
+    rows = []
+    for code, name, exch in R.CFTC:
+        g = df[df.code == code].set_index("date").sort_index()
+        if len(g) < 2:
+            continue
+        last, oi = g.index[-1], g["oi"]
+        net = (g["mm_long"] - g["mm_short"]) / g["oi"] * 100
+        n3 = net[net.index >= last - pd.DateOffset(years=3)].dropna()
+        yago = oi[oi.index <= last - pd.Timedelta(days=358)]
+        pc = float((n3 < n3.iloc[-1]).sum() + 0.5 * ((n3 == n3.iloc[-1]).sum() - 1)) / (len(n3) - 1) * 100 if len(n3) >= 52 else None
+        rows.append({"name": name, "exchange": exch, "code": code, "date": last.strftime("%Y-%m-%d"), "oi": float(oi.iloc[-1]),
+                     "oi_w": pct(float(oi.iloc[-1]), float(oi.iloc[-2])),
+                     "oi_y": pct(float(oi.iloc[-1]), float(yago.iloc[-1])) if len(yago) else None,
+                     "net": None if pd.isna(net.iloc[-1]) else float(net.iloc[-1]),
+                     "net_w": None if len(net) < 2 or pd.isna(net.iloc[-2]) else float(net.iloc[-1] - net.iloc[-2]),
+                     "net_pct3": None if pc is None else round(pc, 1), "rel": "cftc",
+                     "spark": [[d.strftime("%Y-%m-%d"), round(float(x), 2)] for d, x in net.dropna().iloc[-52:].items()]})
     return rows
 
 
@@ -1236,7 +1277,7 @@ def write_packs(rb, hist, days, data):
             "max_stale": R.MAX_STALE_MONTHS, "fresh": R.FRESH_MONTHS, "window": R.WINDOW_DAYS, "lag_days": R.LAG_DAYS,
             "econ": {k: v[0] for k, v in R.ECONOMIES.items()}, "g20": R.G20, "euro": sorted(R.EURO),
             "fx": R.FX, "fx_names": R.FX_NAMES, "fx_units": R.FX_UNITS, "fx_base_foreign": sorted(R.FX_BASE_IS_FOREIGN),
-            "fx_note": data["markets"].get("fx_note"), "commodities": R.COMMODITIES,
+            "fx_note": data["markets"].get("fx_note"), "commodities": R.COMMODITIES, "commodity_basis": R.COMMODITY_BASIS,
             "chokepoints": R.CHOKEPOINTS, "regions": R.REGIONS, "products": R.PRODUCTS, "vital_keys": R.VITAL_KEYS,
             "weo": {k: [v[1], v[2]] for k, v in R.WEO.items()}, "wb": {k: [v[0], v[1], v[2]] for k, v in R.WB.items()}, "wb_fallback": R.WB_FALLBACK,
             "annual_kind": ANNUAL_KIND, "ind_kind": IND_KIND, "math_kind": MATH_KIND,
@@ -1249,7 +1290,8 @@ def main():
     # Every block hits different servers, so run them side by side.
     from concurrent.futures import ThreadPoolExecutor
     jobs = {"macro": macro_block, "annual": annual_block, "prices": prices_block, "markets": markets_block,
-            "power": electricity_block, "transport": transport_block, "ports": ports_block, "freight": freight_block}
+            "power": electricity_block, "transport": transport_block, "ports": ports_block, "freight": freight_block,
+            "futures": futures_block}
     res = {}
     with ThreadPoolExecutor(len(jobs)) as ex:
         futs = {k: ex.submit(timed, k, f) for k, f in jobs.items()}
@@ -1439,7 +1481,7 @@ def main():
         "drivers": drivers(econ, prices, ports),
         "economies": sorted(econ.values(), key=lambda e: (not e["g20"], -(e["score"] or -1))),
         "map": map_rows,
-        "prices": prices, "markets": markets, "trade": ports, "products": R.PRODUCTS, "transport": transport,
+        "prices": prices, "futures": res.get("futures") or [], "markets": markets, "trade": ports, "products": R.PRODUCTS, "transport": transport,
         "freight": freight.get("rows", []), "trade_totals": trade_totals, "periods": C.NAMES, "rel": S.REL,
         "power": {k: v for k, v in power.items()},
         "status": S.STATUS,

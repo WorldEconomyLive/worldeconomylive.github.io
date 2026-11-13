@@ -247,3 +247,11 @@ S.REL.pop("weo", None); S._WEO_FAIL.clear(); S._WEO_OK.clear()
 d, rel = S.weo_all("NGDPD.us_dollars", ["WEO:latest"])
 assert abs(d["USA"].iloc[-1] - 30861.3) < 1e-6, d["USA"]
 print("eia grouped low-carbon + portal scale flag ok")
+
+# CFTC Commitments of Traders (Socrata JSON): numbers arrive as strings
+rows = [{"cftc_contract_market_code": c, "report_date_as_yyyy_mm_dd": f"2026-11-{d:02d}T00:00:00.000", "open_interest_all": str(1000 + d), "m_money_positions_long_all": "300",
+         "m_money_positions_short_all": "100", "market_and_exchange_names": f"MKT {c}"} for c in ("067651", "088691", "002602") for d in (3, 10)]
+S._get = lambda u, **k: types.SimpleNamespace(headers={}, json=lambda: rows)
+cf = S.cftc_cot(["067651", "088691", "002602"], "72hh-3qpy", "2026-01-01")
+assert len(cf) == 6 and cf.oi.max() == 1010 and S.REL["cftc"]["released"] == "2026-11-13", (cf.tail(), S.REL.get("cftc"))
+print("cftc ok")

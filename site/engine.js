@@ -371,11 +371,19 @@
     return d;
   }
 
+  // 12-month low/high of monthly averages and the latest price's percentile over the last 120 months (as run.py price_stats)
+  function priceStats(v) {
+    const w12 = v.slice(-12), w120 = v.slice(-120), x = v[v.length - 1];
+    let lo = 0, eq = 0; for (const y of w120) { if (y < x) lo++; else if (y === x) eq++; }
+    const pc = w120.length >= 24 ? Math.round(((lo + 0.5 * (eq - 1)) / (w120.length - 1)) * 1000) / 10 : null;
+    return { lo12: Math.min(...w12), hi12: Math.max(...w12), pct10: pc };
+  }
   function pricesAt(P, d) {
     const rows = [];
     for (const [, name, ship, unit] of META.commodities) {
       const s = cut(P.pink[name], 'pink', d); if (!s || len(s) < 13) continue;
-      rows.push({ name, ship, level: last(s), date: iso(lastT(s)), unit, m1: pct(last(s), s.v[s.v.length - 2]), chg: change(s, 'pct'), rel: 'pink', yoy: pct(last(s), valueAgo(s, 360)), spark: spark(s, 24) });
+      const B = (META.commodity_basis || {})[name] || ['', 'cash'];
+      rows.push({ name, ship, level: last(s), date: iso(lastT(s)), unit, m1: pct(last(s), s.v[s.v.length - 2]), chg: change(s, 'pct'), rel: 'pink', yoy: pct(last(s), valueAgo(s, 360)), spark: spark(s, 24), ...priceStats(s.v), basis: B[0], kind: B[1] });
     }
     return rows;
   }

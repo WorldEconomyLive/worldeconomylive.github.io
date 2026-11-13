@@ -166,6 +166,8 @@ def flatten(raw):
             put(f"annual/{iso3}/{k}", s)
     for k, s in (raw.get("pink") or {}).items():
         put(f"pink/{k}", s)
+    for k, df in (raw.get("cftc") or {}).items():
+        frame(f"cftc/{k}", df)
     frame("fx", raw.get("fx"))
     frame("yc", raw.get("yc"))
     for k in ("ry", "effr", "debt"):

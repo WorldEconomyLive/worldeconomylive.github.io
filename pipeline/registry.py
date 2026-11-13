@@ -149,6 +149,32 @@ COMMODITIES = [
     ("Gold", "Gold", None, "$/troy oz"), ("Silver", "Silver", None, "$/troy oz"),
 ]
 
+# What each Pink Sheet price is (World Bank definitions, shortened). All are cash/physical benchmarks except cocoa,
+# whose ICCO daily price is an average of the nearest futures contracts.
+COMMODITY_BASIS = {
+    "Brent crude": ("Spot, UK Brent", "cash"), "WTI crude": ("Spot, West Texas Intermediate", "cash"),
+    "US natural gas": ("Spot, Henry Hub", "cash"), "Europe natural gas": ("TTF hub, Netherlands", "cash"),
+    "Asia LNG": ("Japan import price", "cash"), "Coal": ("Australia, Newcastle export", "cash"),
+    "Iron ore": ("China import, 62% Fe", "cash"), "Copper": ("LME cash", "cash"), "Aluminum": ("LME cash", "cash"),
+    "Nickel": ("LME cash", "cash"), "Wheat": ("US hard red winter, Gulf export", "cash"), "Corn": ("US yellow, Gulf export", "cash"),
+    "Rice": ("Thai 5% broken, export", "cash"), "Soybeans": ("US, delivered Rotterdam", "cash"),
+    "Sugar": ("ISA world price, raw", "cash"), "Coffee": ("ICO indicator, Arabica", "cash"),
+    "Cocoa": ("ICCO daily price (nearest futures average)", "futures-based"), "Cotton": ("Cotlook A Index", "cash"),
+    "Beef": ("Australia/NZ, export to US", "cash"), "Fertilizer (urea)": ("Middle East, export", "cash"),
+    "Gold": ("London benchmark", "cash"), "Silver": ("London/New York benchmark", "cash"),
+}
+
+# ---------------- Futures positioning: CFTC Commitments of Traders (public domain), disaggregated, futures only ----------------
+CFTC_DATASET = "72hh-3qpy"
+CFTC = [  # (CFTC contract market code, display name, exchange)
+    ("067651", "WTI crude oil", "NYMEX"), ("06765T", "Brent crude oil (last day)", "NYMEX"), ("023651", "Natural gas (Henry Hub)", "NYMEX"),
+    ("111659", "RBOB gasoline", "NYMEX"), ("022651", "Heating oil (ULSD)", "NYMEX"),
+    ("088691", "Gold", "COMEX"), ("084691", "Silver", "COMEX"), ("085692", "Copper", "COMEX"), ("076651", "Platinum", "NYMEX"),
+    ("002602", "Corn", "CBOT"), ("001602", "Wheat (soft red winter)", "CBOT"), ("001612", "Wheat (hard red winter)", "KCBT"),
+    ("005602", "Soybeans", "CBOT"), ("080732", "Sugar No. 11", "ICE US"), ("083731", "Coffee C", "ICE US"),
+    ("073732", "Cocoa", "ICE US"), ("033661", "Cotton No. 2", "ICE US"), ("057642", "Live cattle", "CME"),
+]
+
 # ---------------- FX (ECB reference rates, quoted per 1 EUR at 14:15 CET) ----------------
 FX = ["USD", "GBP", "JPY", "CNY", "INR", "CAD", "CHF", "KRW", "MXN", "BRL", "AUD", "ZAR", "TRY", "IDR", "SEK", "NOK", "PLN", "NZD", "SGD", "HKD"]
 FX_NAMES = {"EUR": "Euro", "GBP": "British pound", "JPY": "Japanese yen", "CNY": "Chinese yuan", "INR": "Indian rupee",

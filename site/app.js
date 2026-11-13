@@ -114,6 +114,7 @@
     if (k === 'ember') return ['ember', `Source: Ember, Monthly Electricity Data, CC BY 4.0 (${lnk('ember-energy.org')}). 3-month sums and changes computed by this site.`];
     if (k === 'statcan') return ['statcan', `Adapted from Statistics Canada, Table 23-10-0216-01, Railway carloadings, ${esc(hi)}. This does not constitute an endorsement by Statistics Canada of this product.`];
     if (k === 'nyfed') return ['nyfed', NYFED];
+    if (k === 'cftc') return ['cftc', `Source: U.S. Commodity Futures Trading Commission, Commitments of Traders (${lnk('www.cftc.gov')}), a U.S. government work in the public domain. Percentages computed by this site.`];
     return null;
   }
   const NYFED = 'The Effective Federal Funds Rate is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the Effective Federal Funds Rate by World Economy Live, does not sanction or endorse any particular republication, and has no liability for your use.';
@@ -868,11 +869,24 @@
     // commodities + ship types
     {
       const F = foot();
-      $('prices').innerHTML = (D.prices || []).length ? table(['Commodity', 'Price', 'Unit', 'Trend', 'Month'],
+      const unitLab = (u) => String(u || '').replace('$/', 'US$ per ').replace('bbl', 'barrel').replace('mmbtu', 'million Btu').replace('/mt', ' per tonne').replace('per mt', 'per tonne').replace('dmtu', 'dry tonne unit').replace('troy oz', 'troy ounce');
+      const pctWord = (p) => (!ok(p) ? '<span class="na">—</span>' : `<span class="pctl"><i style="width:${Math.max(2, p)}%"></i></span> ${num(p, 0)}`);
+      $('prices').innerHTML = (D.prices || []).length ? table(['Commodity', 'Price', '12-month low', '12-month high', '10-year rank', 'Trend', 'Month'],
         D.prices.map((p) => { F.add(p.name, p.chg); F.rel(p.rel || 'pink', p.date, 'M', '', 'World Bank Pink Sheet');
-          return `<tr><td>${esc(p.name)}</td><td>${v1(num(p.level, p.level < 10 ? 2 : 1), p.chg)}</td><td class="na">${esc(p.unit || '')}</td><td>${p.spark ? spark(p.spark, 90, 22) : ''}</td><td class="na">${esc(String(p.date).slice(0, 7))}</td></tr>`; }))
+          const d = p.level < 10 ? 2 : 1;
+          return `<tr><td>${esc(p.name)}${p.kind === 'futures-based' ? ' <span class="na" title="Based on futures prices">†</span>' : ''}<div class="sub2">${esc(p.basis || '')} · ${esc(unitLab(p.unit))}</div></td><td>${v1(num(p.level, d), p.chg)}</td>`
+            + `<td>${ok(p.lo12) ? num(p.lo12, d) : '<span class="na">—</span>'}</td><td>${ok(p.hi12) ? num(p.hi12, d) : '<span class="na">—</span>'}</td><td>${pctWord(p.pct10)}</td>`
+            + `<td>${p.spark ? spark(p.spark, 90, 22) : ''}</td><td class="na">${esc(plab(p.date, 'M').replace(/^(\w{3})\w*/, '$1'))}</td></tr>`; }))
         : pend('Fills in on the first automated run.');
-      $('f-prices').innerHTML = F.html();
+      $('f-prices').innerHTML = F.html() + `<div class="foot"><p class="fn">Monthly averages of daily cash (spot) benchmark prices as defined by the World Bank; 12-month low and high are of those monthly averages, not of daily prices. 10-year rank: the latest month's percentile among the last 120 monthly averages.${(D.prices || []).some((p) => p.kind === 'futures-based') ? ' † Cocoa: the ICCO daily price is the average of the nearest futures contracts in London and New York.' : ''}</p></div>`;
+      // futures positioning (CFTC)
+      const FU = foot(), FX = D.futures || [];
+      $('futures').innerHTML = FX.length ? table(['Contract', 'Open interest', 'Week', '1 year', 'Funds net', 'Week', 'Funds vs 3 years', 'Funds net, 52 weeks', 'Report'],
+        FX.map((r) => { FU.rel(r.rel || 'cftc', r.date, 'W', '', 'U.S. CFTC');
+          return `<tr><td>${esc(r.name)}<div class="sub2">${esc(r.exchange)}</div></td><td>${big(r.oi)}</td><td class="${cls(r.oi_w)}">${sg(r.oi_w, 1)}</td><td class="${cls(r.oi_y)}">${sg(r.oi_y, 0)}</td>`
+            + `<td class="${cls(r.net)}">${sg(r.net, 0)}</td><td class="${cls(r.net_w)}">${ok(r.net_w) ? sg(r.net_w, 1, ' pp') : '<span class="na">—</span>'}</td><td>${pctWord(r.net_pct3)}</td><td>${r.spark ? spark(r.spark, 90, 22) : ''}</td><td class="na">${esc(mdy(r.date))}</td></tr>`; }))
+        : (D === LIVE ? pend('Fills in on the next automated run.') : '<p class="sub na" style="padding:14px">Futures positioning is shown for the latest report and in archived days from now on; it is not rebuilt for past dates.</p>');
+      $('f-futures').innerHTML = FX.length ? FU.html() + '<div class="foot"><p class="fn">Disaggregated Commitments of Traders, futures only, as of the Tuesday of the report week (published the following Friday). Open interest in contracts, with its percent change over the week and the year. Funds net = (money manager longs − shorts) ÷ open interest, with its change over the week in percentage points. Funds vs 3 years: percentile of the latest funds net among the last 3 years of weekly reports (0 = most bearish, 100 = most bullish).</p></div>' : '';
       const SHIP = [['tanker', 'Tankers — crude, fuel, gas, chemicals'], ['dry_bulk', 'Dry bulk — ores, coal, grain, fertilizer'],
         ['container', 'Containers — manufactured goods, coffee, cotton'], ['general_cargo', 'General cargo — steel, machinery'], ['roro', 'Ro-ro — cars and trucks'], ['total', 'All cargo']];
       const G = T?.pc?.global || {}, H = foot();
