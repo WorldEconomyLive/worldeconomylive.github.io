@@ -179,3 +179,19 @@ CHOKEPOINTS = {  # id: (name, lon, lat)
     "chokepoint23": ("Windward Passage", -73.9, 20.0), "chokepoint24": ("Mona Passage", -67.8, 18.3),
 }
 WINDOW_DAYS, LAG_DAYS = 28, 10
+
+# ---------------- Release timing for viewing past dates ----------------
+# When the site is rebuilt for a past date, a figure counts as released this many days after the end of the
+# period it covers (each source's usual publication delay). Annual sources have their own rules below.
+LAGS = {
+    "oecd:DSD_PRICES@DF_PRICES_ALL": 40, "oecd:DSD_LFS@DF_IALFS_UNE_M": 45, "oecd:DSD_STES@DF_INDSERV": 45,
+    "oecd:DSD_NAMAIN1@DF_QNA": 60, "oecd:DSD_STES@DF_FINMARK": 10, "oecd:DSD_IMTS@DF_IMTS": 50,
+    "bis": 5, "dbn:Eurostat/prc_hicp_manr": 20, "dbn:Eurostat/une_rt_m": 30, "dbn:Eurostat/sts_inpr_m": 45,
+    "dbn:Eurostat/namq_10_gdp": 45, "pink": 5, "ecb": 0, "treasury": 0, "nyfed": 1, "fiscaldata": 1, "mts": 12,
+    "ember": 45, "bts": 75, "eurostat:avia_gooc": 100, "eurostat:rail_go_quartal": 120, "statcan": 55, "portwatch": 7,
+}
+DEFAULT_LAG = 45
+# IMF WEO: figures for year Y count as released with the October WEO of year Y (15 October).
+# World Bank WDI: figures for year Y count as released on 1 July of year Y+1.
+WEO_RELEASE_MD, WB_RELEASE_MD = (10, 15), (7, 1)
+HISTORY_START = "1980-01-01"     # first day the score rebuild looks at

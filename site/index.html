@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#000000">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<link rel="stylesheet" href="vendor/katex.min.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,8 +17,10 @@
   <nav>
     <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Debt</a><a href="#years">Years</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#method">Method</a>
   </nav>
+  <button class="navbtn mono" id="navbtn" type="button" aria-expanded="false" aria-label="Sections">Sections ▾</button>
   <div class="upd mono" id="upd">—</div>
-  <div class="perbar"><span class="mono plab">CHANGE OVER</span><div id="period" class="seg" role="group" aria-label="Comparison period"></div><span class="mono pnote" id="perlabel"></span></div>
+  <div class="perbar"><span class="pergrp"><span class="mono plab">CHANGE OVER</span><div id="period" class="seg" role="group" aria-label="Comparison period"></div></span><span class="asof"><label class="mono plab" for="asof">AS OF</label><input type="date" id="asof" aria-label="Show the site as of this date"><button id="asofnow" class="mono" type="button">Today</button></span><span class="mono pnote pergrp" id="perlabel"></span></div>
+  <div class="asofban mono" id="asofban" role="status" aria-live="polite"></div>
 </header>
 
 <section class="hero" id="map">
@@ -29,7 +31,6 @@
     <div class="pill" id="wlabel">Pending</div>
     <p class="headline" id="headline">Loading the world…</p>
     <p class="mono small" id="breakdown"></p>
-    <p class="mono small" id="coverage"></p>
   </div>
   <div class="layers" id="layers">
     <button data-l="score" class="on">Score</button><button data-l="gdp">Growth</button><button data-l="inflation">Inflation</button><button data-l="unemployment">Jobless</button><button data-l="debt">Debt</button><button data-l="ca">Current acct</button><button data-l="tb">Trade bal.</button><button data-l="power">Power</button><button data-l="trade">Port trade</button>
@@ -38,7 +39,7 @@
   <div class="tip mono" id="tip"></div>
 </section>
 
-<div class="mapfoot" id="f-map"></div>
+<div class="mapfoot"><p class="mono cov" id="coverage"></p><div id="f-map"></div></div>
 <div class="ticker mono"><div class="track" id="ticker"></div></div>
 
 <main>
@@ -170,22 +171,41 @@
       <p>The <b>Change over</b> toggle at the top sets one comparison period for every panel: 1M, 3M, 6M, 1Y, 3Y, 5Y, 10Y, 15Y or 20Y (default 1Y). Each value is shown with its change over that period.</p>
       <p><b>Scores</b>: points. <b>Interest rates and bond yields</b> (and spreads between them): basis points. <b>Series already in percent</b> (inflation, unemployment, growth, shares of GDP): percentage points. <b>Levels</b> (prices, exchange rates, trade values, cargo, electricity, freight): percent change; for 3Y and longer this is the compound annual rate, labelled "per year". Trade balances can switch sign, so their change is shown in dollars.</p>
       <p>For <b>5Y and longer</b>, monthly and weekly series compare the latest 12-month average with the 12-month average the same number of years earlier. Quarterly series compare quarter with quarter, annual series year with year, and daily market series day with day.</p>
-      <p><b>Seasonal series</b> that are not seasonally adjusted (port cargo, imports vs exports by region, chokepoints, sea cargo by ship type, electricity demand, rail and air freight) keep a like-for-like window: the latest 28 days, month, 3 months or quarter vs the same window 1, 3, 5, 10, 15 or 20 years earlier. They show changes for 1Y and longer only. Annual sections (debt, deficits and balances; people and health) also start at 1Y. What changed, the map colors and the ticker do not follow the toggle; the map tooltip does.</p>
-      <p>A change shows <b>n/a</b> when the series is too infrequent for the period (1M on quarterly data; 1M–6M on annual data), when the period reaches back before the series begins (the note under the panel gives the start date), or when the source has no observation at the comparison point. Nothing is estimated or filled in. The note under each panel gives the latest data period, the date the source published it (from the source's own metadata) and the source.</p>
+      <p><b>Seasonal series</b> that are not seasonally adjusted (port cargo, imports vs exports by region, chokepoints, sea cargo by ship type, electricity demand, rail and air freight) keep a like-for-like window: the latest 28 days, month, 3 months or quarter vs the same window 1, 3, 5, 10, 15 or 20 years earlier. They show changes for 1Y and longer only. Annual sections (debt, deficits and balances; people and health) also start at 1Y. What changed and the map colors do not follow the toggle; the map tooltip and the ticker do.</p>
+      <p>A change shows <b>n/a</b> when the series is too infrequent for the period (1M on quarterly data; 1M–6M on annual data), when the period reaches back before the series begins (the note under the panel gives the start date), or when the source has no observation at the comparison point. Nothing is estimated or filled in. The note under each panel gives the latest data period, when the source published it and the source. "Released" is a date from the source's own metadata for that series; "dataset last updated" is the date the source last updated the whole dataset the series belongs to (OECD, World Bank and Eurostat publish dates per dataset, not per series); "published daily" marks market data released each business day; where a source publishes no date the note says so. A range after "Latest" means the latest period differs between the rows of the panel; a table of past years shows "History: first to last · Latest: last".</p>
+    </details>
+    <details><summary>Viewing past dates</summary>
+      <p>The <b>As of</b> date next to the toggle shows the whole site as it stood on that date: every value, score, map color, What changed item and note is the latest available on or before it, and the toggle measures back from that date (1Y = one year before it). Nothing published after the chosen date is shown. Weekends and holidays show the latest data on or before them.</p>
+      <p><b>As shown on that date</b>: from the first day of the daily archive on, the site shows exactly what it showed that day. Every day the run keeps a copy of the site's data and of every input series as fetched (new and revised figures), a record that cannot be rebuilt later.</p>
+      <p><b>Rebuilt from data as published today</b>: for earlier dates the site is rebuilt from the sources' current history, so figures include later revisions. Each figure counts as released after its source's usual delay after the end of the period it covers: OECD inflation 40 days, unemployment and factory output 45, GDP 60, bond yields 10, merchandise trade 50; BIS policy rates 5; Eurostat inflation 20, unemployment 30, factory output and GDP 45, air freight 100, rail freight 120; World Bank Pink Sheet 5; Ember 45; US BTS freight 75; Statistics Canada 55; Monthly Treasury Statement 12; IMF PortWatch 7 (the latest 10 days are left out as today); ECB exchange rates and Treasury yields the same day; fed funds and federal debt 1. IMF World Economic Outlook figures for a year count as released with that year's October WEO (15 October), World Bank WDI figures on 1 July of the following year. Scores before the archive began are rebuilt the same way, applying today's method to each past date.</p>
+      <p>The earliest date offered is the first date for which at least one score can be computed. Series that had not begun by the chosen date show n/a with "history begins …" in the note.</p>
     </details>
     <details><summary>The formulas</summary><div id="formulas"></div></details>
     <details><summary>Sources, licences and status</summary>
-      <p class="small">OECD Data Explorer (CC BY 4.0) · World Bank: World Development Indicators and Commodity Price Data "Pink Sheet" (CC BY 4.0) · IMF World Economic Outlook via DBnomics · Eurostat · European Central Bank reference rates · Bank for International Settlements policy rates · U.S. Department of the Treasury (Fiscal Data, daily yield curves) · Federal Reserve Bank of New York (effective fed funds rate) · Ember monthly electricity data (CC BY 4.0) · U.S. Bureau of Transportation Statistics (public domain) · IMF PortWatch (port and chokepoint activity from satellite ship tracking). Port data lags, so the latest 10 days are excluded. Figures are reproduced as published or transformed (year-over-year changes, ratios, scores) by this site; sources are not responsible for these transformations.</p>
+      <p class="small">Every panel's note names its source and carries the credit line that source's terms ask for. All figures are free public data, shown with credit, with the site's own calculations (changes, windows, ratios, scores) stated as such; no source endorses this site or is responsible for these calculations. Port data lags, so the latest 10 days are excluded.</p>
+      <ul class="small srcs">
+        <li><b>OECD</b> Data Explorer: inflation, unemployment, factory output, GDP, bond yields, merchandise trade. Cited as OECD (year), dataset name, OECD Data Explorer.</li>
+        <li><b>International Monetary Fund</b>: World Economic Outlook database (IMF DataMapper; DBnomics mirror as a fallback) and PortWatch (port and chokepoint activity from satellite ship tracking, UN Global Platform). Use is subject to the <a href="https://www.imf.org/en/about/copyright-and-terms" target="_blank" rel="noopener">IMF's copyright and usage terms</a>; anyone reusing IMF figures from this site should follow them too.</li>
+        <li><b>World Bank</b>: World Development Indicators and Commodity Price Data (The Pink Sheet), CC BY 4.0. No endorsement by the World Bank is implied.</li>
+        <li><b>Bank for International Settlements</b>: central bank policy rates, compiled from national central banks. The BIS does not guarantee their accuracy or completeness.</li>
+        <li><b>Eurostat</b>: euro-area fallbacks, air and rail freight. Eurostat bears no responsibility for this reuse.</li>
+        <li><b>European Central Bank</b>: euro foreign exchange reference rates (Source: ECB statistics), converted by this site into US-dollar pairs.</li>
+        <li><b>Federal Reserve Bank of New York</b>: effective federal funds rate. The Effective Federal Funds Rate is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the Effective Federal Funds Rate by World Economy Live, does not sanction or endorse any particular republication, and has no liability for your use.</li>
+        <li><b>U.S. Department of the Treasury</b> (daily yield curves; Fiscal Data: Debt to the Penny, Monthly Treasury Statement) and <b>U.S. Bureau of Transportation Statistics</b>: U.S. government works, public domain.</li>
+        <li><b>Ember</b>: monthly electricity data, CC BY 4.0.</li>
+        <li><b>Statistics Canada</b>: adapted from Statistics Canada, Table 23-10-0216-01, Railway carloadings. This does not constitute an endorsement by Statistics Canada of this product.</li>
+      </ul>
       <div class="status" id="status"></div>
     </details>
   </section>
 
-  <footer class="mono">OPEN SOURCE · PUBLIC DATA ONLY · NOT INVESTMENT ADVICE · <span id="gen"></span></footer>
+  <footer class="mono">OPEN SOURCE · PUBLIC DATA ONLY · NOT INVESTMENT ADVICE · <span id="gen"></span><p class="fnotice" id="fnotice"></p></footer>
 </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script src="vendor/d3.min.js"></script>
+<script src="vendor/topojson.min.js"></script>
+<script src="vendor/katex.min.js"></script>
+<script src="engine.js"></script>
 <script src="app.js"></script>
 <script data-goatcounter="https://worldeconomylive.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>

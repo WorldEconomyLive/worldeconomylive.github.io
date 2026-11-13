@@ -94,3 +94,30 @@ fy = S.us_fiscal_years()
 assert list(fy.fy) == [2025, 2027] and fy.iloc[0].receipts == 5.23e12 and fy.iloc[1].outlays == 0.69e12, fy
 assert S.REL["mts"]["released"] == "2026-11-12"
 print("us fiscal years ok")
+
+# IMF DataMapper (current WEO): values by country and year, edition from the indicator's source text
+def dm_get(u, **k):
+    if u.endswith("/indicators"):
+        return types.SimpleNamespace(headers={}, json=lambda: {"indicators": {"PCPIPCH": {"source": "World Economic Outlook (October 2026)"}}})
+    vals = {iso: {"2024": 58.5 if iso == "TUR" else 219.9, "2025": 34.9 if iso == "TUR" else 41.9, "2026": 28.6 if iso == "TUR" else 30.4} for iso in ["TUR", "ARG"] + [f"X{i:02d}" for i in range(60)]}
+    vals["ADVEC"] = {"2025": 2.0}
+    return types.SimpleNamespace(headers={}, json=lambda: {"values": {"PCPIPCH": vals}})
+S._get = dm_get
+S.REL.pop("weo", None)
+S._DM_LABEL.clear()
+d, rel = S.weo_all("PCPIPCH.pcent_change", ["WEO:latest"])
+assert rel == "WEO October 2026" and S.REL["weo"]["label"] == "WEO October 2026", (rel, S.REL["weo"])
+assert d["TUR"][pd.Timestamp("2025-07-01")] == 34.9 and d["ARG"][pd.Timestamp("2025-07-01")] == 41.9 and "ADVEC" not in d
+print("imf datamapper ok")
+
+# Sahm rule: 3-month average vs its lowest 3-month average over the PRIOR 12 months (monthly data only)
+from pathlib import Path  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
+import run as RUN  # noqa: E402
+u = pd.Series([4.0] * 14 + [4.3, 4.6, 4.9], index=pd.date_range("2024-01-01", periods=17, freq="MS"))
+e = {"indicators": {"inflation": {"latest": 2.0, "annual": False}, "unemployment": {"latest": 4.9, "annual": False}}, "_series": {"unemployment": pd.concat([pd.Series([4.0] * 10, index=pd.date_range("2023-03-01", periods=10, freq="MS")), u])}}
+m = RUN.macro_math(e)
+assert abs(m["sahm"] - (4.6 - 4.0)) < 1e-9, m["sahm"]      # (4.3+4.6+4.9)/3 = 4.6 vs prior low 4.0
+e["_series"]["unemployment"] = None
+assert "sahm" not in RUN.macro_math(e)                    # annual-only unemployment: no Sahm
+print("sahm ok")

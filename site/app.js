@@ -83,28 +83,69 @@
     if (f === 'D' || f === 'W') return mdy(s);
     return `${MON[d[1] - 1]} ${d[0]}`;
   }
+  // when a figure counts as released, for a site rebuilt for a past date (standard delay per source)
+  function lagWhen(R, hi, f) {
+    const E_ = window.WELEngine; if (!E_ || !hi) return 'release date not published by source';
+    const n = E_.parse(hi), y = E_.ymd(n)[0];
+    if (R.basis === 'weo') { const [m, d] = D.asof.weo_md; return `counted as released ${mdy(E_.iso(E_.dn(y, m, d)))} (October WEO of that year)`; }
+    if (R.basis === 'wb') { const [m, d] = D.asof.wb_md; return `counted as released ${mdy(E_.iso(E_.dn(y + 1, m, d)))} (World Bank, July of the following year)`; }
+    const L = R.lag ?? 0, at = E_.periodEnd(n, f || 'D') + L;
+    return `counted as released ${mdy(E_.iso(at))} (${L ? `standard ${L}-day delay after the period ends` : 'published the same day'})`;
+  }
+  // credit and notice lines each source's terms ask for, added under any panel that shows its data
+  const lnk = (u) => `<a href="https://${u}" target="_blank" rel="noopener">${u}</a>`;
+  const OECD_DS = { 'DSD_PRICES@DF_PRICES_ALL': 'Consumer price indices', 'DSD_LFS@DF_IALFS_UNE_M': 'Infra-annual labour statistics, unemployment rates',
+    'DSD_STES@DF_INDSERV': 'Production and sales (industry)', 'DSD_NAMAIN1@DF_QNA': 'Quarterly national accounts', 'DSD_STES@DF_FINMARK': 'Financial market statistics',
+    'DSD_IMTS@DF_IMTS': 'International merchandise trade statistics' };
+  function notice(k, hi) {
+    const yr = String(LIVE?.asof?.today || LIVE?.generated_at || '').slice(0, 4), imf = `IMF terms: ${lnk('www.imf.org/en/about/copyright-and-terms')}`;
+    if (k.startsWith('oecd:')) { const id = k.slice(5); return ['oecd', `${esc(OECD_DS[id] || id)} (${esc(id)})`, yr]; }
+    if (k === 'weo') return ['weo', `Source: International Monetary Fund, World Economic Outlook database${(D.rel?.weo?.label || LIVE?.rel?.weo?.label) ? ' (' + esc(D.rel?.weo?.label || LIVE.rel.weo.label) + ')' : ''}, ${lnk('data.imf.org')}. Changes and scores computed by this site. ${imf}.`];
+    if (k === 'portwatch') return ['portwatch', `Source: International Monetary Fund, PortWatch (satellite ship-tracking data from the UN Global Platform), ${lnk('portwatch.imf.org')}. Summed into 28-day windows and compared by this site. ${imf}.`];
+    if (k === 'bis') return ['bis', `Source: BIS, central bank policy rates (${lnk('data.bis.org')}), compiled from each country's national central bank. The BIS does not guarantee the accuracy or completeness of the statistics; nothing here is an investment recommendation or advice.`];
+    if (k.startsWith('eurostat:') || k.startsWith('dbn:Eurostat')) return ['eurostat', 'Source: Eurostat. Changes and windows computed by this site; Eurostat bears no responsibility for this reuse.'];
+    if (k === 'ecb') return ['ecb', 'Source: ECB statistics (euro foreign exchange reference rates). Converted to US-dollar pairs and percent changes by this site.'];
+    if (k === 'pink') return ['pink', `Source: World Bank, Commodity Price Data (The Pink Sheet), CC BY 4.0. Changes computed by this site; no endorsement by the World Bank is implied.`];
+    if (k.startsWith('wb:')) return ['wb', `Source: World Bank, World Development Indicators, CC BY 4.0 (${lnk('data.worldbank.org')}). Changes computed by this site; no endorsement by the World Bank is implied.`];
+    if (k === 'ember') return ['ember', `Source: Ember, Monthly Electricity Data, CC BY 4.0 (${lnk('ember-energy.org')}). 3-month sums and changes computed by this site.`];
+    if (k === 'statcan') return ['statcan', `Adapted from Statistics Canada, Table 23-10-0216-01, Railway carloadings, ${esc(hi)}. This does not constitute an endorsement by Statistics Canada of this product.`];
+    if (k === 'nyfed') return ['nyfed', NYFED];
+    return null;
+  }
+  const NYFED = 'The Effective Federal Funds Rate is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the Effective Federal Funds Rate by World Economy Live, does not sanction or endorse any particular republication, and has no liability for your use.';
   function foot(word = 'Latest') {
     const rel = new Map(), items = [];
     return {
-      rel(key, date, f, what, fallback) {
+      // span = the dates are a history shown in the panel (e.g. a table of years), not latest values
+      rel(key, date, f, what, fallback, span = false) {
         if (!date) return;
         const k = key || fallback || 'other';
-        if (!rel.has(k)) rel.set(k, { dates: [], f, what: new Set(), fallback });
-        const r = rel.get(k); r.dates.push(String(date).slice(0, 10)); if (what) r.what.add(what); if (!r.f) r.f = f;
+        if (!rel.has(k)) rel.set(k, { dates: [], f, what: new Set(), fallback, span });
+        const r = rel.get(k); r.dates.push(String(date).slice(0, 10)); if (what) r.what.add(what); if (!r.f) r.f = f; if (span) r.span = true;
       },
       add(name, o) { if (o) items.push([name, o]); },
       html() {
-        const lines = [], merged = new Map();
+        const lines = [], merged = new Map(), lic = new Map(), oecd = new Set(); let oyr = '';
         for (const [k, r] of rel) {
-          if (k === 'site') { lines.push(`${esc([...r.what].join(', '))} — last computed ${mdy(r.dates.sort().pop())} by this site from the sources listed in this note and in Method.`); continue; }
-          const R = (D.rel || {})[k] || {}, ds = r.dates.sort(), lo = plab(ds[0], r.f), hi = plab(ds[ds.length - 1], r.f);
-          const when = R.released ? `released ${mdy(R.released)}${R.basis === 'daily' ? ' (published daily)' : ''}` : 'release date not published by source';
+          { const ds_ = [...r.dates].sort(), n = notice(k, plab(ds_[ds_.length - 1], r.f));
+            if (n && n[0] === 'oecd') { oecd.add(n[1]); oyr = n[2]; } else if (n && !lic.has(n[0])) lic.set(n[0], n[1]); }
+          if (k === 'site') {
+            lines.push(D.rebuilt ? `${esc([...r.what].join(', '))} — rebuilt for ${mdy(D.asof_view)} by this site with today's method, from the sources listed in this note and in Method as they publish them today.`
+              : `${esc([...r.what].join(', '))} — last computed ${mdy(r.dates.sort().pop())} by this site from the sources listed in this note and in Method.`); continue;
+          }
+          const R = (D.rel || {})[k] || (D.rebuilt && window.WELEngine ? { source: r.fallback, basis: k === 'weo' ? 'weo' : k.startsWith('wb:') ? 'wb' : 'lag', lag: window.WELEngine.lagOf(k) } : {});
+          const ds = r.dates.sort(), lo = plab(ds[0], r.f), hi = plab(ds[ds.length - 1], r.f);
+          const when = ['lag', 'weo', 'wb'].includes(R.basis) ? lagWhen(R, ds[ds.length - 1], r.f)
+            : R.released ? (R.basis === 'dataset' ? `dataset last updated ${mdy(R.released)}` : `released ${mdy(R.released)}${R.basis === 'daily' ? ' (published daily)' : ''}`) : 'release date not published by source';
           const src = (R.source || r.fallback || k) + (R.label ? `, ${R.label}` : '');
-          const key = [lo, hi, when, src].join('|');
-          if (!merged.has(key)) merged.set(key, { what: new Set(), lo, hi, when, src });
+          const key = [lo, hi, when, src, r.span ? 1 : 0].join('|');
+          if (!merged.has(key)) merged.set(key, { what: new Set(), lo, hi, when, src, span: r.span });
           r.what.forEach((w) => merged.get(key).what.add(w));
         }
-        for (const m of merged.values()) lines.push(`${m.what.size ? esc([...m.what].join(', ')) + ' — ' : ''}${word}: ${esc(m.lo === m.hi ? m.hi : m.lo + ' to ' + m.hi)} · ${esc(m.when)} · source: ${esc(m.src)}`);
+        for (const m of merged.values()) {
+          const range = m.lo === m.hi ? `${word}: ${m.hi}` : m.span ? `History: ${m.lo} to ${m.hi} · Latest: ${m.hi}` : `${word}: ${m.lo} to ${m.hi}`;
+          lines.push(`${m.what.size ? esc([...m.what].join(', ')) + ' — ' : ''}${esc(range)} · ${esc(m.when)} · source: ${esc(m.src)}`);
+        }
         const by = { s: new Map(), f: [], g: [], x: [], z: [] };
         let avg = false, perYear = false;
         for (const [n, o] of items) {
@@ -126,17 +167,20 @@
         if (na.length) notes.push(`n/a for ${PERS[PI]} — ${na.join('; ')}.`);
         if (avg) notes.push(`${PERS[PI]} compares the latest 12-month average with the 12-month average ${PWORD[PI]} earlier.`);
         if (perYear) notes.push('Percent changes over 3 years or more are compound annual rates ("per year").');
-        return `<div class="foot">${lines.map((l) => `<p>${l}</p>`).join('')}${notes.map((l) => `<p class="fn">${l}</p>`).join('')}</div>`;
+        return `<div class="foot">${lines.map((l) => `<p>${l}</p>`).join('')}${notes.map((l) => `<p class="fn">${l}</p>`).join('')}${(oecd.size ? [`OECD (${oyr}), ${[...oecd].join('; ')}, OECD Data Explorer, ${lnk('data-explorer.oecd.org')}. Changes, ratios and scores computed by this site.`] : []).concat([...lic.values()]).map((l) => `<p class="lic">${l}</p>`).join('')}</div>`;
       },
     };
   }
 
-  let D;
-  try { D = await (await fetch('data/heartbeat.json', { cache: 'no-store' })).json(); }
+  let D, LIVE, E, T, M;
+  try { LIVE = D = await (await fetch('data/heartbeat.json', { cache: 'no-store' })).json(); }
   catch (e) { $('headline').textContent = 'Data not available yet. The first daily run will create it.'; return; }
-  const E = D.economies || [], T = D.trade, M = D.markets || {};
+  const bind = () => { E = D.economies || []; T = D.trade; M = D.markets || {}; };
+  bind();
   $('upd').textContent = 'UPDATED ' + (D.generated_at || '');
   $('gen').textContent = 'LAST UPDATE ' + (D.generated_at || '');
+  if ($('fnotice')) $('fnotice').textContent = NYFED;
+  dispatchEvent(new Event('resize'));       // the header just changed width: re-check whether the section links fit
   const mapName = (iso) => Object.values(D.map || {}).find((r) => r.iso3 === iso)?.name || iso;
 
   // ---------------- map ----------------
@@ -152,10 +196,17 @@
     power: { get: (r) => r.power, c: 'power', color: (v) => div(v, 8), legend: ['−8%', '0', '+8% power use'], ramp: [div(-8, 8), div(0, 8), div(8, 8)] },
     trade: { get: (r) => r.trade, c: 'trade', color: (v) => div(v, 30), legend: ['−30%', '0', '+30%'], ramp: [div(-30, 30), div(0, 30), div(30, 30)] },
   };
+  const viewYear = () => +String(D.asof_view || D.asof?.today || new Date().toISOString()).slice(0, 4);
   const LAYER_SRC = { score: 'Score', gdp: 'GDP growth', inflation: 'Inflation', unemployment: 'Unemployment', debt: 'Government debt', ca: 'Current account', tb: 'Trade balance', power: 'Electricity demand', trade: 'Port cargo' };
-  let layer = 'score', paths, cpG, proj;
+  let layer = 'score', paths, cpG, proj, drawCP = () => {};
   const tip = $('tip');
-  function showTip(ev, html) { const r = $('map').getBoundingClientRect(); tip.innerHTML = html; tip.style.opacity = 1; tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 260) + 'px'; tip.style.top = (ev.clientY - r.top + 14) + 'px'; }
+  // tooltip next to the cursor, flipped above or to the left when it would run off the map
+  function showTip(ev, html) {
+    const r = $('map').getBoundingClientRect(); tip.innerHTML = html; tip.style.opacity = 1;
+    const x = ev.clientX - r.left, y = ev.clientY - r.top, w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.max(8, x + 14 + w > r.width - 8 ? x - 14 - w : x + 14) + 'px';
+    tip.style.top = Math.max(8, y + 14 + h > r.height - 8 ? y - 14 - h : y + 14) + 'px';
+  }
   const hideTip = () => { tip.style.opacity = 0; };
   function mapFoot() {
     const L = LAYERS[layer], F = foot();
@@ -171,7 +222,11 @@
     }
     if (layer !== 'score' && layer !== 'power' && layer !== 'trade') {
       const yrs = Object.values(D.map || {}).map((r) => r.c?.[L.c]).filter((o) => o?.f === 'A').length;
-      if (yrs) { const anyK = layer === 'tb' ? 'wb:NE.RSB.GNFS.ZS' : 'weo'; F.rel(anyK, `${new Date().getUTCFullYear()}-07-01`, 'A', 'Annual estimates', layer === 'tb' ? 'World Bank' : 'IMF WEO'); }
+      if (yrs) {
+        const anyK = layer === 'tb' ? 'wb:NE.RSB.GNFS.ZS' : 'weo', vd = String(D.asof_view || D.asof?.today || '').slice(5, 10), y = viewYear();
+        const yr = layer === 'tb' ? (vd >= '07-01' ? y - 1 : y - 2) : (vd >= '10-15' ? y : y - 1);   // latest year each source has out on the view date
+        F.rel(anyK, `${yr}-07-01`, 'A', 'Annual figures', layer === 'tb' ? 'World Bank' : 'IMF WEO');
+      }
     }
     if (layer === 'score') F.rel('site', D.generated_at, 'D', 'Scores (computed by this site from the series below)', 'World Economy Live');
     $('f-map').innerHTML = `<p class="fl">MAP COLORS · ${esc(LAYER_SRC[layer].toUpperCase())} (CURRENT VALUES) · TOOLTIP CHANGES OVER ${PERS[PI]}</p>` + F.html();
@@ -186,7 +241,7 @@
   document.querySelectorAll('#layers button').forEach((b) => b.addEventListener('click', () => { layer = b.dataset.l; paint(); }));
   const tipLine = (lab, val, o, good, abs) => `<br>${lab} ${val}${o ? ' <span class="tc">' + (ctext(o, abs) ?? 'n/a') + '</span>' : ''}`;
   try {
-    const world = await (await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')).json();
+    const world = await (await fetch('vendor/countries-110m.json')).json();
     const feats = topojson.feature(world, world.objects.countries).features.filter((f) => f.properties.name !== 'Antarctica');
     const el = $('globe'), W = el.clientWidth, H = el.clientHeight;
     proj = d3.geoNaturalEarth1().fitExtent([[10, 50], [W - 10, H - 30]], { type: 'FeatureCollection', features: feats });
@@ -211,13 +266,20 @@
           if (c.trade) h += `<br>Port cargo <span class="tc">${ctext(c.trade) ?? 'n/a'}</span>`;
           if (c.power) h += `<br>Power use <span class="tc">${ctext(c.power) ?? 'n/a'}</span>`;
           if (!r.tracked) h += `<br><span style="color:#5f646d">${r.basis === 'annual' ? 'score from IMF annual estimates' + (c.trade || c.power ? ' + live port/power data' : '') : 'annual data (IMF/World Bank)'}</span>`;
-        } else h += '<br><span style="color:#5f646d">not tracked yet</span>';
+          if (!ok(r.score)) h += `<br><span style="color:#5f646d">no score · tap for the data the site has</span>`;
+        } else h += '<br><span style="color:#5f646d">No data available</span>';
         showTip(ev, h);
       })
       .on('mouseleave', () => { hideTip(); hl.style('opacity', 0); })
-      .on('click', (ev, d) => { const r = D.map?.[String(+d.id)]; const i = E.findIndex((e) => e.iso3 === r?.iso3); if (i >= 0) { filt = 'all'; renderGrid(); openDetail(i); } });
-    const cps = (T?.chokepoints || []).filter((c) => ok(c.lon));
+      .on('click', (ev, d) => { const r = D.map?.[String(+d.id)]; if (r) openCountry(r.iso3); });
+    paths.style('cursor', (d) => (D.map?.[String(+d.id)] ? 'pointer' : 'default'));
     cpG = svg.append('g');
+    drawCP = () => { cpG.selectAll('*').remove(); drawChokepoints(); };
+    drawChokepoints();
+  } catch (e) { $('globe').innerHTML = '<p class="sub" style="padding:120px 30px;text-align:right">Map unavailable.</p>'; }
+  function drawChokepoints() {
+    if (!cpG || !proj) return;
+    const cps = (T?.chokepoints || []).filter((c) => ok(c.lon));
     cps.forEach((c) => {
       const [x, y] = proj([c.lon, c.lat]), r = 2.5 + Math.min(6, Math.sqrt(c.daily_transits || 1) / 2);
       const col = div(c.transits_yoy, 40);
@@ -225,7 +287,7 @@
       cpG.append('circle').attr('class', 'cp').attr('cx', x).attr('cy', y).attr('r', r).attr('fill', col)
         .on('mousemove', (ev) => showTip(ev, `<b>${esc(c.name)}</b><br>${num(c.daily_transits, 0)} ships/day<br>${sg(c.transits_yoy, 0)} vs a year ago${PI !== 3 ? `<br><span class="tc">${ctext(c.chg) ?? 'n/a'} over ${PERS[PI]}</span>` : ''}`)).on('mouseleave', hideTip);
     });
-  } catch (e) { $('globe').innerHTML = '<p class="sub" style="padding:120px 30px;text-align:right">Map unavailable.</p>'; }
+  }
 
   // ---------------- economies (grid + detail) ----------------
   const PIL = { activity: 'ACT', labor: 'JOBS', prices: 'PRICE', trade: 'TRADE' };
@@ -289,7 +351,8 @@
       + (Fd.gdp_usd ? fact('GDP', usd(Fd.gdp_usd.value), `${Fd.gdp_usd.year} · ${esc(Fd.gdp_usd.source)}`) : '')
       + (ok(d.r_minus_g) ? fact('r − g', sg(d.r_minus_g, 1, ' pp'), d.r_minus_g > 0 ? 'DEBT GROWS FASTER THAN GDP' : 'GROWTH ERODES DEBT') : '');
     const mth = [['real_rate', 'Real interest rate', (v) => sg(v, 2, '%')], ['misery', 'Misery index', (v) => num(v)], ['taylor', 'Taylor rule rate', (v) => num(v, 2) + '%'], ['taylor_gap', 'Taylor gap', (v) => sg(v, 2, ' pp')], ['sahm', 'Sahm rule', (v) => num(v, 2)], ['curve', 'Yield curve (10y − policy)', (v) => sg(v, 2, ' pp')], ['output_gap', 'Output gap (Okun)', (v) => sg(v, 1)]]
-      .filter(([k]) => ok(m[k])).map(([k, l, f]) => fact(l, f(m[k]), k === 'sahm' ? (m[k] >= 0.5 ? 'RECESSION SIGNAL' : 'NO SIGNAL (NEEDS 0.5)') : '')).join('');
+      .filter(([k]) => ok(m[k]) || k === 'sahm').map(([k, l, f]) => (k === 'sahm' && !ok(m[k]) ? fact(l, '<span class="na">n/a</span>', 'NEEDS MONTHLY UNEMPLOYMENT')
+        : fact(l, f(m[k]), k === 'sahm' ? (m[k] >= 0.5 ? 'RECESSION SIGNAL' : 'NO SIGNAL (NEEDS 0.5)') : ''))).join('');
     const vit = [['population', 0], ['life_exp', 1], ['age65', 0], ['fertility', 0], ['health_spend', 0], ['net_migration', 0], ['urban', 0], ['gdp_pc', 1], ['gini', -1]].filter(([k]) => V[k])
       .map(([k]) => { F.rel(V[k].rel, `${V[k].year}-07-01`, 'A', V[k].label, 'World Bank');
         return fact(V[k].label, big(V[k].value) + (V[k].unit.startsWith('%') ? '%' : ''), `${esc(V[k].unit).toUpperCase()} · ${V[k].year}${ok(V[k].ten_years_ago) ? ' · 10Y AGO ' + big(V[k].ten_years_ago) : ''}`); }).join('');
@@ -297,6 +360,7 @@
     $('detail').innerHTML = `<div class="detail"><div class="dtop"><button class="back" id="dback">← All economies</button><button class="back" id="dclose" aria-label="Close">✕</button></div><h3>${esc(e.name)}</h3><div class="score" style="font-size:56px">${ok(e.score) ? Math.round(e.score) : '—'}<small>/100</small></div>
       <div class="cc big">${chg(e.score_chg, 1) || ''} <span class="na mono small">over ${PERS[PI]}</span></div>
       <span class="pill ${esc(e.label)}">${esc(e.label)}</span><span class="mono small" style="margin-left:10px">${esc(e.coverage || '')} PILLARS</span>
+      ${ok(e.score) ? '' : `<p class="plain"><b>Not scored:</b> fewer than two pillars available (output, jobs, prices, trade). ${(() => { const h = Object.entries({ activity: 'output', labor: 'jobs', prices: 'prices', trade: 'trade' }).filter(([k]) => ok(e.pillars?.[k])).map(([, v]) => v); return h.length ? `Available: ${h.join(', ')}.` : 'None of the four is available.'; })()}</p>`}
       <p class="plain">${esc(plain(e)) || 'Detailed data fills in after the first automated run.'}</p>
       ${e.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(e.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25, sg(v, 0, ''))}</div>`).join('')}</div>` : ''}
       ${live ? `<h3>Live indicators</h3><ul class="facts">${live}</ul>` : ''}${mth ? `<h3>Formulas</h3><ul class="facts">${mth}</ul>` : ''}
@@ -304,16 +368,75 @@
       <div class="dyr"><h3>Year by year</h3><select id="dysel" aria-label="Calendar year"></select></div><ul class="facts" id="dyfacts"></ul><div id="dyfoot"></div></div>`;
     detailYear(e.iso3);
   }
+  // ---------------- readout for any country on the map ----------------
+  function openCountry(iso3) {
+    const i = E.findIndex((e) => e.iso3 === iso3);
+    if (i >= 0) { filt = 'all'; renderGrid(); openDetail(i); return; }
+    showCountry(iso3).then(() => requestAnimationFrame(() => $('detail').scrollIntoView({ behavior: 'smooth', block: 'start' })));
+  }
+  const NA = '<span class="na">n/a</span>';
+  async function showCountry(iso3) {
+    openIdx = null; document.querySelectorAll('.eco').forEach((b) => b.classList.remove('on'));
+    await loadAnnual();
+    const r = Object.values(D.map || {}).find((x) => x.iso3 === iso3) || { iso3, name: iso3, c: {} }, c = r.c || {}, F = foot();
+    const A = AN?.data?.[iso3] || {}, vy = viewYear();
+    const latest = (k) => { const a = A[k]; if (!a) return null; for (let j = a[1].length - 1; j >= 0; j--) if (ok(a[1][j]) && a[0] + j <= vy) return { v: a[1][j], y: a[0] + j, k }; return null; };
+    const series = (k) => { const a = A[k]; if (!a || !window.WELEngine) return null; const t_ = [], v_ = []; a[1].forEach((x, j) => { if (ok(x) && a[0] + j <= vy) { t_.push(window.WELEngine.dn(a[0] + j, 7, 1)); v_.push(x); } }); return t_.length ? { t: t_, v: v_ } : null; };
+    const achg = (k) => { const s = series(k); return s ? A1(window.WELEngine.change(s, AN.keys[k]?.kind || 'pp', 'A')) : null; };
+    const src = (k) => (AN.keys[k]?.rel === 'weo' ? 'IMF WEO' : 'WORLD BANK');
+    const item = (lab, k, f, good = 0) => {
+      const x = latest(k);
+      if (!x) return fact(lab, NA, 'NOT PUBLISHED FOR THIS COUNTRY');
+      const o = achg(k); F.add(`${lab.toLowerCase()}`, o); F.rel(AN.keys[k]?.rel, `${x.y}-07-01`, 'A', lab, AN.keys[k]?.rel === 'weo' ? 'IMF World Economic Outlook' : 'World Bank');
+      const est = AN.keys[k]?.rel === 'weo' && x.y >= AN.estimate_from;
+      return fact(lab, f(x.v), `${x.y}${est ? ' EST' : ''} · ${src(k)}`, chg(o, good));
+    };
+    const X = latest('exports_usd_a'), Mx = latest('imports_usd_a'), tb = X && Mx && X.y === Mx.y ? X.v - Mx.v : null;
+    const pw = D.power?.[iso3];
+    if (pw) F.rel('ember', pw.date, 'M', 'Electricity demand', 'Ember');
+    if (c.trade) { F.add('port cargo', c.trade); F.rel('portwatch', T?.window?.[1], 'D', 'Port cargo', 'IMF PortWatch'); }
+    const out = [item('GDP growth', 'gdp_growth', (v) => sg(v), 1), item('Inflation', 'inflation_a', (v) => num(v) + '%', -1), item('Unemployment', 'unemployment_a', (v) => num(v) + '%', -1)].join('');
+    const gov = [item('GDP', 'gdp_usd', usd, 1), item('Government debt', 'gov_debt', (v) => num(v, 0) + '% of GDP', -1), item('Budget balance', 'gov_balance', (v) => sg(v, 1, '% of GDP'), 1),
+      item('Primary balance', 'primary_balance', (v) => sg(v, 1, '% of GDP'), 1), item('Current account', 'current_account', (v) => sg(v, 1, '% of GDP')),
+      item('Exports, goods & services', 'exports_usd_a', usd, 1), item('Imports, goods & services', 'imports_usd_a', usd),
+      fact('Trade balance (X − M)', ok(tb) ? usd(Math.abs(tb)) + (tb >= 0 ? ' surplus' : ' deficit') : NA, ok(tb) ? `${X.y} · WORLD BANK` : 'NOT PUBLISHED FOR THIS COUNTRY'),
+      item('Net exports', 'net_exports', (v) => sg(v, 1, '% of GDP') + sd(v), 1), item('FX reserves', 'reserves_usd', usd)].join('');
+    const live = [fact('Port cargo', ok(r.trade) ? sg(r.trade, 0) : NA, ok(r.trade) ? `28 DAYS Y/Y · TO ${esc(mdy(T?.window?.[1]))} · IMF PORTWATCH` : 'NO TRACKED PORTS', c.trade ? chg(c.trade, 1) : ''),
+      fact('Electricity demand', pw ? sg(pw.yoy_3m) : NA, pw ? `3 MONTHS Y/Y · ${esc(String(pw.date).slice(0, 7))} · EMBER` : 'NOT IN EMBER DATA', pw ? chg(pw.chg, 1) : '')].join('');
+    const ppl = [item('Population', 'population', big), item('Population growth', 'pop_growth', (v) => sg(v, 2)), item('Life expectancy', 'life_exp', (v) => num(v, 1) + ' years', 1),
+      item('Aged 65+', 'age65', (v) => num(v, 1) + '%'), item('Births per woman', 'fertility', (v) => num(v, 2)), item('Health spending', 'health_spend', (v) => num(v, 1) + '% of GDP'),
+      item('Net migration', 'net_migration', (v) => (v < 0 ? '−' : '+') + big(Math.abs(v))), item('Urban population', 'urban', (v) => num(v, 0) + '%'),
+      item('GDP per person', 'gdp_pc', usd, 1), item('Inequality (Gini)', 'gini', (v) => num(v, 1), -1)].join('');
+    const PN = ['output', 'jobs', 'prices', 'trade'], have = r.why || [];
+    let top;
+    if (ok(r.score)) {
+      F.add('Score', c.score); F.rel('site', D.generated_at, 'D', 'Score (computed by this site)', 'World Economy Live');
+      top = `<div class="score" style="font-size:56px">${Math.round(r.score)}<small>/100</small></div><div class="cc big">${chg(c.score, 1) || ''} <span class="na mono small">over ${PERS[PI]}</span></div>
+        <span class="pill ${esc(r.label)}">${esc(r.label)}</span><span class="mono small" style="margin-left:10px">SCORED FROM IMF ANNUAL ESTIMATES${c.trade || c.power ? ' + LIVE PORT/POWER DATA' : ''}</span>
+        ${r.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(r.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25, sg(v, 0, ''))}</div>`).join('')}</div>` : ''}`;
+    } else {
+      top = `<p class="plain"><b>Not scored:</b> fewer than two pillars available (${PN.join(', ')}). ${have.length ? `Available: ${esc(have.join(', '))}.` : 'None of the four is available.'}</p>`;
+    }
+    $('detail').innerHTML = `<div class="detail"><div class="dtop"><button class="back" id="dback">← Map</button><button class="back" id="dclose" aria-label="Close">✕</button></div><h3>${esc(r.name)}</h3>${top}
+      <h3>Output, prices and jobs</h3><ul class="facts">${out}</ul><h3>Live activity</h3><ul class="facts">${live}</ul>
+      <h3>Government and trade</h3><ul class="facts">${gov}</ul><h3>People and health</h3><ul class="facts">${ppl}</ul>${F.html()}
+      <div class="dyr"><h3>Year by year</h3><select id="dysel" aria-label="Calendar year"></select></div><ul class="facts" id="dyfacts"></ul><div id="dyfoot"></div></div>`;
+    $('dback').addEventListener('click', () => $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    $('dclose').addEventListener('click', () => { $('detail').innerHTML = ''; $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    await detailYear(iso3);
+  }
+
   async function detailYear(iso) {
     await loadAnnual();
     if (!AN.years || !$('dysel')) return;
-    if (YEAR === null) YEAR = AN.estimate_from - 1;
+    if (YEAR === null || YEAR > AN.years[1] || YEAR < AN.years[0]) YEAR = Math.min(AN.years[1], AN.estimate_from - 1);
     const sel = $('dysel');
+    sel.innerHTML = '';
     for (let y = AN.years[1]; y >= AN.years[0]; y--) sel.insertAdjacentHTML('beforeend', `<option value="${y}">${y}${y >= AN.estimate_from ? ' (est.)' : ''}</option>`);
     sel.value = String(YEAR);
-    sel.addEventListener('change', () => { YEAR = +sel.value; detailYear(iso); renderYears(); });
+    sel.onchange = () => { YEAR = +sel.value; detailYear(iso); renderYears(); };
     const star = YEAR >= AN.estimate_from ? '*' : '';
-    const items = YCOLS.map(([k, l, f]) => { const v = anVal(iso, k, YEAR); return ok(v) ? fact(l, f(v) + (AN.keys[k]?.rel === 'weo' ? star : ''), `${YEAR} · ${AN.keys[k]?.rel === 'weo' ? 'IMF WEO' : 'WORLD BANK'}`) : ''; }).join('');
+    const items = YCOLS.map(([k, l, f]) => { const x = anLag(iso, k, YEAR); return x ? fact(l, anCell(x, f, k, star), `${x.y}${x.lag ? ' · LATEST PUBLISHED' : ''} · ${AN.keys[k]?.rel === 'weo' ? 'IMF WEO' : 'WORLD BANK'}`) : ''; }).join('');
     $('dyfacts').innerHTML = items || `<li><div class="m">No annual data published for ${YEAR}.</div></li>`;
     $('dyfoot').innerHTML = yearFoot(YEAR, [iso]);
   }
@@ -328,6 +451,7 @@
     scIso = iso;
     document.querySelectorAll('#scoretbl tbody tr').forEach((r) => r.classList.toggle('sel', r.dataset.iso === iso));
     if (!SER) { try { SER = await (await fetch('data/series.json', { cache: 'no-store' })).json(); } catch (_) { SER = {}; } }
+    if (!$('schart')) return;
     const e = E.find((x) => x.iso3 === iso), H = SER[iso] || {};
     const avail = COLS.filter(([k]) => (H[k] || []).length >= 3);
     if (!avail.find(([k]) => k === scCol) && avail.length) scCol = avail[0][0];
@@ -350,11 +474,13 @@
     const unit = col[2] === '%' ? '%' : col[2] === '$bn' ? ' bn US$' : col[2] === 'pp' ? ' pp' : '';
     $('hnote').textContent = `${col[1]}: latest ${num(last[1], 2)}${unit} (${pts[pts.length - 1][0].toISOString().slice(0, 7)}). `
       + (scCol === 'trade_balance_12m' ? 'Goods exports minus imports over the past 12 months; above zero is a surplus, below is a deficit. ' : '')
-      + (scCol === 'score' ? 'Score history builds up one point per day from launch. ' : '') + 'Sources and release dates: see the note under the table.';
+      + (scCol === 'score' ? `Weekly points. Before ${mdy(D.asof?.archive_start)} the score is rebuilt with today's method from data as published today; from then on it is the score as shown each day. ` : '') + 'Sources and release dates: see the note under the table.';
   }
 
   // ---------------- everything that follows the period toggle ----------------
   const v1 = (val, o, good = 0, abs) => `${val}${chg(o, good, abs)}`;
+  // empty panel: live = waiting for the first run; past date = nothing published yet by that date
+  const pend = (liveMsg) => (D === LIVE ? `<p class="sub" style="padding:14px">${liveMsg}</p>` : `<p class="sub na" style="padding:14px">n/a — no data published on or before ${mdy(D.asof_view || D.asof?.today)}; the series begins later (see the note).</p>`);
   function renderAll() {
     $('perlabel').textContent = `Changes shown over ${PWORD[PI]}`;
     document.querySelectorAll('#period button').forEach((b) => b.classList.toggle('on', +b.dataset.p === PI));
@@ -370,12 +496,12 @@
     if (w.tracked) $('coverage').textContent = `${w.scored || w.tracked} COUNTRIES SCORED · ${w.tracked} IN DEPTH · ${w.countries} ON THE MAP`;
     paint();
 
-    // ticker (not period-driven)
-    const tk = [];
-    (D.prices || []).filter((p) => ['Brent crude', 'Gold', 'Copper', 'Wheat', 'Asia LNG'].includes(p.name)).forEach((p) => tk.push(`<span>${esc(p.name.toUpperCase())}<b>${num(p.level, 2)}</b><em class="${cls(p.yoy)}">${sg(p.yoy, 0)} y/y</em></span>`));
-    (M.fx || []).filter((f) => ['EUR', 'JPY', 'CNY', 'GBP'].includes(f.code)).forEach((f) => tk.push(`<span>${esc(f.pair)}<b>${num(f.latest, f.latest < 10 ? 4 : 2)}</b><em class="${cls(f.y1)}">${sg(f.y1, 1)} y/y</em></span>`));
-    (M.rates || []).filter((r) => /10-year Treasury|Fed funds/.test(r.name)).forEach((r) => tk.push(`<span>${esc(r.name.toUpperCase())}<b>${num(r.latest, 2)}%</b></span>`));
-    if (ok(w.trade_yoy)) tk.push(`<span>GLOBAL PORT CARGO<b>${sg(w.trade_yoy, 1)}</b>y/y</span>`);
+    // ticker: follows the toggle, same units and "per year" rule as everywhere else
+    const tk = [], tch = (o, good = 0) => { const s = ctext(o); return `<em class="${s === null ? 'na' : good ? cls(o.v[PI], good > 0) : cls(o.v[PI])}">${s ?? 'n/a'} ${PERS[PI].toLowerCase()}</em>`; };
+    (D.prices || []).filter((p) => ['Brent crude', 'Gold', 'Copper', 'Wheat', 'Asia LNG'].includes(p.name)).forEach((p) => tk.push(`<span>${esc(p.name.toUpperCase())}<b>${num(p.level, 2)}</b>${tch(p.chg)}</span>`));
+    (M.fx || []).filter((f) => ['EUR', 'JPY', 'CNY', 'GBP'].includes(f.code)).forEach((f) => tk.push(`<span>${esc(f.pair)}<b>${num(f.latest, f.latest < 10 ? 4 : 2)}</b>${tch(f.chg)}</span>`));
+    (M.rates || []).filter((r) => /10-year Treasury|Fed funds/.test(r.name)).forEach((r) => tk.push(`<span>${esc(r.name.toUpperCase())}<b>${num(r.latest, 2)}%</b>${tch(r.chg)}</span>`));
+    if (T?.pc?.global?.total) tk.push(`<span>GLOBAL PORT CARGO ${tch(T.pc.global.total)}</span>`);
     $('ticker').innerHTML = tk.length ? tk.join('') + tk.join('') : '<span>Markets fill in on the first automated run.</span>';
 
     // what changed (not period-driven: a summary of recent changes)
@@ -404,11 +530,12 @@
           return `<tr data-iso="${esc(e.iso3)}"><td>${esc(e.name)}</td><td>${v1(ok(e.score) ? Math.round(e.score) : '—', e.score_chg, 1)}</td><td class="${cls(I_(e, 'gdp'))}">${v1(sg(I_(e, 'gdp')), IC(e, 'gdp'), 1)}</td>
           <td>${v1(num(I_(e, 'inflation')) + '%', IC(e, 'inflation'), -1)}</td><td>${v1(num(I_(e, 'unemployment')) + '%', IC(e, 'unemployment'), -1)}</td>
           <td>${v1(num(I_(e, 'policy_rate'), 2), IC(e, 'policy_rate'))}</td><td>${v1(sg(e.math?.real_rate, 2, ''), mc.real_rate)}</td><td>${v1(num(e.math?.misery), mc.misery, -1)}</td><td>${v1(sg(e.math?.taylor_gap, 2, ''), mc.taylor_gap)}</td>
-          <td class="${ok(e.math?.sahm) && e.math.sahm >= 0.5 ? 'neg' : ''}">${v1(num(e.math?.sahm, 2), mc.sahm, -1)}</td><td class="${cls(e.math?.curve)}">${v1(sg(e.math?.curve, 2, ''), mc.curve)}</td>
+          <td class="${ok(e.math?.sahm) && e.math.sahm >= 0.5 ? 'neg' : ''}">${ok(e.math?.sahm) ? v1(num(e.math.sahm, 2), mc.sahm, -1) : '<span class="na" title="The Sahm rule needs monthly unemployment">n/a</span>'}</td><td class="${cls(e.math?.curve)}">${v1(sg(e.math?.curve, 2, ''), mc.curve)}</td>
           <td class="${cls(e.trade_m?.balance_12m)}">${ok(e.trade_m?.balance_12m) ? v1(bn(Math.abs(e.trade_m.balance_12m)) + sd(e.trade_m.balance_12m), e.trade_m?.c?.balance_12m, 1, absBn) : '—'}</td></tr>`;
         }));
       F.rel('site', D.generated_at, 'D', 'Scores and formulas (computed by this site)', 'World Economy Live');
-      $('f-scorecard').innerHTML = F.html();
+      const noSahm = E.filter((e) => !ok(e.math?.sahm)).map((e) => e.name);
+      $('f-scorecard').innerHTML = F.html() + (noSahm.length ? `<div class="foot"><p class="fn">Sahm rule n/a — calculated only from monthly unemployment (3-month average vs its lowest 3-month average over the prior 12 months); no monthly series for ${esc(noSahm.join(', '))}.</p></div>` : '');
       document.querySelectorAll('#scoretbl tbody tr').forEach((r) => { r.classList.toggle('sel', r.dataset.iso === scIso); r.addEventListener('click', () => { showHist(r.dataset.iso); $('schart').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }); });
     }
 
@@ -434,7 +561,7 @@
         const ch = (k, l) => `${l} ${ctext(A1(F_(e, k)?.chg)) ?? 'n/a'}`;
         const parts = [[c, 'var(--c1)', 'C'], [i, 'var(--c2)', 'I'], [g, 'var(--c3)', 'G'], [Math.max(nx, 0), 'var(--c4)', 'NX']], tot = parts.reduce((a, p) => a + p[0], 0);
         return `<div class="row"><div>${esc(e.name)}<div class="m">${F_(e, 'consumption').year} · NX ${sg(nx, 1)}</div><div class="m">${[ch('consumption', 'C'), ch('investment', 'I'), ch('gov_consumption', 'G'), ch('net_exports', 'NX')].join(' · ')}</div></div><div class="stack">${parts.filter((p) => p[0] > 0).map(([v, col, l]) => `<span style="width:${(v / tot) * 100}%;background:${col}" title="${l} ${num(v)}%">${v / tot > 0.09 ? l + ' ' + Math.round(v) : ''}</span>`).join('')}</div></div>`;
-      }).join('')}</div>` : '<p class="sub">Fills in on the first automated run.</p>';
+      }).join('')}</div>` : pend('Fills in on the first automated run.');
       $('f-comp').innerHTML = G.html();
 
       const H = foot();
@@ -442,11 +569,11 @@
       $('debtmath').innerHTML = dm.length ? table(['Economy', '10y yield (r)', 'Nominal growth (g)', 'r − g', 'Debt % GDP', 'Primary bal. needed', 'Actual primary bal.', 'Debt ratio'],
         dm.map((e) => { const d = e.derived, pb0 = F_(e, 'primary_balance'), pb = pb0 && { ...pb0, chg: A1(pb0.chg) }, dc = Object.fromEntries(Object.entries(e.dchg || {}).map(([k, o]) => [k, A1(o)])), lr0 = e.indicators?.long_rate, lr = lr0 && { ...lr0, chg: A1(lr0.chg) };
           [['10y yield', lr?.chg], ['nominal growth', dc.nominal_growth], ['r − g', dc.r_minus_g], ['debt', A1(F_(e, 'gov_debt')?.chg)], ['primary balance needed', dc.pb_stabilizing], ['primary balance', pb?.chg]].forEach(([n, o]) => H.add(`${e.name} ${n}`, o));
-          if (lr) H.rel(lr.rel, lr.date, lr.chg?.f, '10-year yields', lr.source);
+          if (lr) H.rel(lr.rel, lr.date, lr0.chg?.f, '10-year yields', lr.source);
           if (F_(e, 'gov_debt')) H.rel(F_(e, 'gov_debt').rel, `${F_(e, 'gov_debt').year}-07-01`, 'A', 'Debt and primary balance', F_(e, 'gov_debt').source);
           return `<tr><td>${esc(e.name)}</td><td>${v1(num(I_(e, 'long_rate'), 2) + '%', lr?.chg)}</td><td>${v1(num(d.nominal_growth) + '%', dc.nominal_growth)}</td><td class="${cls(d.r_minus_g, false)}">${v1(sg(d.r_minus_g, 1, ' pp'), dc.r_minus_g, -1)}</td><td>${v1(num(F_(e, 'gov_debt')?.value, 0) + '%', A1(F_(e, 'gov_debt')?.chg), -1)}</td>
             <td>${v1(sg(d.pb_stabilizing, 1), dc.pb_stabilizing)}</td><td>${v1(sg(pb?.value, 1), pb?.chg, 1)}</td><td>${!ok(d.fiscal_gap) ? '—' : d.fiscal_gap >= 0 ? '<span class="pill Strong">Falling</span>' : '<span class="pill Stressed">Rising</span>'}</td></tr>`; }))
-        : '<p class="sub" style="padding:14px">Needs bond yields, growth and inflation. Fills in on the first automated run.</p>';
+        : pend('Needs bond yields, growth and inflation. Fills in on the first automated run.');
       $('f-debtmath').innerHTML = H.html();
     }
 
@@ -475,7 +602,12 @@
         return `<div class="row"><div>${esc(c.name)}<div class="m">${num(c.daily_transits, 0)} SHIPS/DAY</div></div>${bar(v, (v ?? 0) < 0 ? 'var(--neg)' : 'var(--pos)', PI >= 4 ? 15 : 60, ok(v) ? ctext(c.chg) : undefined)}</div>`; }).join('');
       Hf.rel('portwatch', T.window[1], 'D', '', 'IMF PortWatch');
       $('f-choke').innerHTML = Hf.html();
-    } else { $('heat').innerHTML = '<p class="sub" style="padding:14px">Port data pending.</p>'; }
+    } else {
+      const st = LIVE.trade?.pc?.global?.total?.s;
+      $('tradesub').textContent = "Cargo (metric tons) through each region's busiest ports.";
+      ['heat', 'impexp', 'choke'].forEach((id) => { $(id).innerHTML = pend('Port data pending.'); });
+      ['f-heat', 'f-impexp', 'f-choke'].forEach((id) => { $(id).innerHTML = D === LIVE ? '' : `<div class="foot"><p class="fn">n/a — history begins ${esc(st || '01/2019')}: IMF PortWatch port and chokepoint data.</p></div>`; });
+    }
 
     // merchandise trade in US$
     {
@@ -496,7 +628,7 @@
         }
         $('tradeusd').innerHTML = table(['Economy', 'Exports (month)', 'Imports (month)', 'Balance (month)', 'Exports, 12m', 'Imports, 12m', 'Balance, 12m', 'Month'], rows);
         $('tusdsub').textContent = `Monthly goods exports and imports in US$ (OECD international merchandise trade), with the change over ${PWORD[PI]}. Balances are shown as a dollar change because they can switch between surplus and deficit.`;
-      } else { $('tradeusd').innerHTML = '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>'; }
+      } else { $('tradeusd').innerHTML = pend('Fills in on the next automated run.'); }
       $('f-tradeusd').innerHTML = F.html();
     }
 
@@ -507,7 +639,7 @@
       $('power').innerHTML = PW.length ? table(['Country', 'Demand, latest month', 'Trend (3-month y/y)', 'Month'],
         PW.slice(0, 40).map((r) => { F.add(r.name, r.chg); F.rel(r.rel || 'ember', r.date, 'M', '', 'Ember');
           return `<tr><td>${esc(r.name)}</td><td>${v1(num(r.twh, 1) + ' TWh', r.chg)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(String(r.date).slice(0, 7))}</td></tr>`; }))
-        : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
+        : pend('Fills in on the next automated run.');
       $('f-power').innerHTML = F.html() + `<div class="foot"><p class="fn">Change compares demand in the latest 3 months with the same 3 months ${PI < 3 ? '1 year or more' : PWORD[PI]} earlier (not seasonally adjusted, so shorter periods are not shown).</p></div>`;
       const G = foot();
       const TR = [...(D.transport || []).map((r) => ({ country: r.country || 'United States', mode: r.name, latest: r.latest, unit: '', chg: r.chg, spark: r.spark, date: r.date, rel: r.rel || 'bts' })),
@@ -515,7 +647,7 @@
       $('transport').innerHTML = TR.length ? table(['Country', 'Mode', 'Latest', 'Trend', 'Period'],
         TR.map((r) => { G.add(`${r.country} ${r.mode.toLowerCase()}`, r.chg); G.rel(r.rel, r.date, r.chg?.f, '', r.rel === 'bts' ? 'US Bureau of Transportation Statistics' : r.rel === 'statcan' ? 'Statistics Canada' : 'Eurostat');
           return `<tr><td>${esc(r.country)}</td><td>${esc(r.mode)}</td><td>${v1(big(r.latest) + (r.unit ? ' <span class="na">' + esc(r.unit) + '</span>' : ''), r.chg)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.chg?.f === 'Q' ? plab(r.date, 'Q') : String(r.date).slice(0, 7))}</td></tr>`; }))
-        : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
+        : pend('Fills in on the next automated run.');
       $('f-transport').innerHTML = G.html() + '<div class="foot"><p class="fn">Like-for-like windows, not seasonally adjusted: US series compare the latest month with the same month in the earlier year; European air freight and Canadian rail compare the latest 3 months; European rail compares the latest quarter.</p></div>';
     }
 
@@ -525,14 +657,14 @@
       $('prices').innerHTML = (D.prices || []).length ? table(['Commodity', 'Price', 'Unit', 'Trend', 'Month'],
         D.prices.map((p) => { F.add(p.name, p.chg); F.rel(p.rel || 'pink', p.date, 'M', '', 'World Bank Pink Sheet');
           return `<tr><td>${esc(p.name)}</td><td>${v1(num(p.level, p.level < 10 ? 2 : 1), p.chg)}</td><td class="na">${esc(p.unit || '')}</td><td>${p.spark ? spark(p.spark, 90, 22) : ''}</td><td class="na">${esc(String(p.date).slice(0, 7))}</td></tr>`; }))
-        : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
+        : pend('Fills in on the first automated run.');
       $('f-prices').innerHTML = F.html();
       const SHIP = [['tanker', 'Tankers — crude, fuel, gas, chemicals'], ['dry_bulk', 'Dry bulk — ores, coal, grain, fertilizer'],
         ['container', 'Containers — manufactured goods, coffee, cotton'], ['general_cargo', 'General cargo — steel, machinery'], ['roro', 'Ro-ro — cars and trucks'], ['total', 'All cargo']];
       const G = T?.pc?.global || {}, H = foot();
       $('shiptypes').innerHTML = SHIP.filter(([k]) => G[k]).map(([k, n]) => { H.add(n.split(' — ')[0], G[k]); const v = G[k].v?.[PI];
         return `<div class="row"><div>${n}<div class="m">${ctext(G[k]) ?? 'n/a'} over ${PERS[PI]}</div></div><div>${bar(v, 'var(--pos)', PI >= 4 ? 10 : 30, ok(v) ? sg(v, 0) : undefined)}</div></div>`; }).join('')
-        || '<p class="sub">Fills in on the next automated run.</p>';
+        || pend('Fills in on the next automated run.');
       if (T?.window) H.rel('portwatch', T.window[1], 'D', '', 'IMF PortWatch');
       $('f-ship').innerHTML = H.html();
     }
@@ -542,14 +674,14 @@
       const F = foot();
       $('fxnote').textContent = (M.fx_note || '') + ` "Currency vs USD" shows whether that currency gained (+) or lost (−) value against the dollar over ${PWORD[PI]}.`;
       $('fx').innerHTML = (M.fx || []).length ? table(['Pair', 'Means', 'Spot', 'Currency vs USD', '12 months', 'Date'], M.fx.map((r) => { F.add(r.pair, r.chg); F.add(`${r.code} vs USD`, r.ccy_chg); F.rel(r.rel || 'ecb', r.date, 'D', '', 'ECB');
-        return `<tr><td class="mono">${esc(r.pair || r.name)}</td><td class="def">${esc(r.meaning || r.name)}</td><td>${v1(num(r.latest, r.latest < 10 ? 4 : 2), r.chg)}</td><td>${chg(r.ccy_chg, 1) || '—'}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`; })) : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
+        return `<tr><td class="mono">${esc(r.pair || r.name)}</td><td class="def">${esc(r.meaning || r.name)}</td><td>${v1(num(r.latest, r.latest < 10 ? 4 : 2), r.chg)}</td><td>${chg(r.ccy_chg, 1) || '—'}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`; })) : pend('Fills in on the first automated run.');
       $('f-fx').innerHTML = F.html();
       const G = foot(), GR = M.global_rates || [];
       $('grates').innerHTML = GR.length ? table(['Economy', 'Policy rate', '10-year yield', 'Real policy rate', 'Curve (10y − policy)', 'Source', 'Date'],
         GR.map((r) => { const c = r.c || {}; G.add(`${r.name} policy rate`, c.policy); G.add(`${r.name} 10-year`, c.long); G.add(`${r.name} real rate`, r.real_est ? null : c.real); G.add(`${r.name} curve`, c.curve);
           G.rel(r.rel, r.date, 'M', 'Policy rates', r.policy_src); if (r.rel_long) G.rel(r.rel_long, r.date, 'M', '10-year yields', 'OECD');
           return `<tr><td>${esc(r.name)}</td><td>${ok(r.policy) ? v1(num(r.policy, 2) + '%', c.policy) : '—'}</td><td>${ok(r.long) ? v1(num(r.long, 2) + '%', c.long) : '—'}</td><td class="${cls(r.real)}">${v1(sg(r.real, 2, '%') + (r.real_est ? '*' : ''), r.real_est ? { v: Array(9).fill(null), r: 'xxxxxxxxx' } : c.real)}</td><td class="${cls(r.curve)}">${v1(sg(r.curve, 2, ' pp'), c.curve)}</td><td class="na">${esc(r.policy_src || 'OECD')}</td><td class="na">${esc(String(r.date || '').slice(0, 7))}</td></tr>`; }))
-        : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
+        : pend('Fills in on the next automated run.');
       $('f-grates').innerHTML = G.html() + (GR.some((r) => r.real_est) ? '<div class="foot"><p class="fn">* Real rate uses latest annual inflation; no change is shown for these rows because annual inflation has no matching monthly history.</p></div>' : '');
       // Treasury curve: today vs the start of the selected period
       const YC = M.curve;
@@ -574,7 +706,7 @@
       }
       const H = foot();
       $('rates').innerHTML = (M.rates || []).length ? table(['Rate', 'Latest %', '12 months', 'Date'], M.rates.map((r) => { H.add(r.name, r.chg); H.rel(r.rel, r.date, 'D', '', r.rel === 'nyfed' ? 'Federal Reserve Bank of New York' : 'US Treasury');
-        return `<tr><td>${esc(r.name)}</td><td>${v1(num(r.latest, 2), r.chg)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`; })) : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
+        return `<tr><td>${esc(r.name)}</td><td>${v1(num(r.latest, 2), r.chg)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`; })) : pend('Fills in on the first automated run.');
       $('f-rates').innerHTML = H.html();
       const J = foot();
       $('usfiscal').innerHTML = (M.us_fiscal || []).map((r) => { J.add(r.name, r.chg); J.rel(r.rel || 'fiscaldata', r.date, 'D', '', 'US Treasury Fiscal Data');
@@ -582,10 +714,10 @@
       const FY = M.us_fy || [], K = foot();
       const mon = (d) => { const p = String(d).slice(0, 10).split('-'); return `${MON[+p[1] - 1]} ${p[0]}`; };
       $('usfy').innerHTML = FY.length ? table(['Fiscal year', 'Receipts', 'Outlays', 'Surplus / deficit', 'Debt at year end', 'Debt added in year'], FY.map((r) => {
-        K.rel('mts', r.through, 'M', 'Receipts, outlays, surplus/deficit', 'US Treasury, Monthly Treasury Statement');
-        if (r.debt_end) K.rel('fiscaldata', `${r.fy}-09-30`, 'D', 'Debt at fiscal year end', 'US Treasury Fiscal Data');
+        K.rel('mts', r.through, 'M', 'Receipts, outlays, surplus/deficit', 'US Treasury, Monthly Treasury Statement', true);
+        if (r.debt_end) K.rel('fiscaldata', `${r.fy}-09-30`, 'D', 'Debt at fiscal year end', 'US Treasury Fiscal Data', true);
         return `<tr><td>FY${r.fy}${r.complete ? '' : `<div class="m na">to date, through ${esc(mon(r.through))}</div>`}</td><td>${usd(r.receipts)}</td><td>${usd(r.outlays)}</td><td class="${cls(r.balance)}">${usd(Math.abs(r.balance))}${sd(r.balance)}</td><td>${r.debt_end ? usd(r.debt_end) : '<span class="na">—</span>'}</td><td>${ok(r.debt_change) ? usd(r.debt_change) : '<span class="na">—</span>'}</td></tr>`; }))
-        : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>';
+        : pend('Fills in on the next automated run.');
       $('f-usfy').innerHTML = K.html() + '<div class="foot"><p class="fn">Fiscal years are not affected by the change-period toggle. Debt columns start where the daily debt series the site loads begins.</p></div>';
     }
 
@@ -595,7 +727,7 @@
       const VK = [['population', 'Population'], ['pop_growth', 'Growth %'], ['life_exp', 'Life exp.'], ['age65', '65+ %'], ['fertility', 'Births/woman'], ['health_spend', 'Health % GDP'], ['net_migration', 'Net migration'], ['urban', 'Urban %'], ['gdp_pc', 'GDP/person $']];
       $('vitals').innerHTML = E.some((e) => Object.keys(e.vitals || {}).length) ? table(['Economy', ...VK.map((v) => v[1])], E.map((e) => `<tr><td>${esc(e.name)}</td>${VK.map(([k, l]) => { const x = e.vitals?.[k]; if (!x) return '<td>—</td>';
         F.add(`${e.name} ${l.toLowerCase()}`, x.chg); F.rel(x.rel, `${x.year}-07-01`, 'A', x.label, 'World Bank');
-        return `<td>${v1(big(x.value), x.chg, 0, k === 'net_migration' ? absPeople : undefined)}</td>`; }).join('')}</tr>`)) : '<p class="sub" style="padding:14px">Fills in on the first automated run.</p>';
+        return `<td>${v1(big(x.value), x.chg, 0, k === 'net_migration' ? absPeople : undefined)}</td>`; }).join('')}</tr>`)) : pend('Fills in on the first automated run.');
       $('f-vitals').innerHTML = F.html();
     }
   }
@@ -603,48 +735,133 @@
   // ---------------- year by year (calendar years; not period-dependent) ----------------
   let AN = null, YEAR = null, yfilt = 'g20', yq = '';
   const anVal = (iso, k, y) => { const r = AN?.data?.[iso]?.[k]; if (!r) return null; const v = r[1][y - r[0]]; return ok(v) ? v : null; };
+  // value for year y, or — when the source has not published y yet — its latest year, with that year as a marker
+  const anLag = (iso, k, y) => {
+    const v = anVal(iso, k, y); if (ok(v)) return { v, y };
+    const r = AN?.data?.[iso]?.[k]; if (!r) return null;
+    const lastY = r[0] + r[1].length - 1; if (lastY >= y) return null;
+    for (let j = r[1].length - 1; j >= 0; j--) if (ok(r[1][j])) return { v: r[1][j], y: r[0] + j, lag: true };
+    return null;
+  };
+  const anCell = (x, f, k, star) => (x ? f(x.v) + (AN.keys[k]?.rel === 'weo' && !x.lag ? star : '') + (x.lag ? ` <span class="na">(${x.y})</span>` : '') : '<span class="na">—</span>');
   const YCOLS = [['gdp_growth', 'GDP growth', (v) => sg(v), 1], ['inflation_a', 'Inflation', (v) => num(v) + '%', -1], ['unemployment_a', 'Unemployment', (v) => num(v) + '%', -1],
     ['gdp_usd', 'GDP', (v) => usd(v), 0], ['gov_debt', 'Gov. debt % GDP', (v) => num(v, 0), 0], ['gov_balance', 'Budget bal. % GDP', (v) => sg(v, 1, ''), 1],
     ['current_account', 'Current acct % GDP', (v) => sg(v, 1, ''), 1], ['net_exports', 'Trade bal. % GDP', (v) => sg(v, 1, '') + sd(v), 1],
     ['population', 'Population', (v) => big(v), 0], ['gdp_pc', 'GDP/person', (v) => usd(v), 0], ['life_exp', 'Life exp.', (v) => num(v, 1), 0]];
   async function loadAnnual() {
     if (AN) return AN;
+    if (D !== LIVE) return (AN = { data: {} });
     try { AN = await (await fetch('data/annual.json', { cache: 'no-store' })).json(); } catch (_) { AN = { data: {} }; }
     return AN;
   }
   function yearFoot(y, isos) {
     const F = foot('Year shown'), est = AN.estimate_from;
+    let lagged = false;
     for (const [k, l] of YCOLS) {
       const meta = AN.keys?.[k]; if (!meta) continue;
-      if (isos.some((i) => ok(anVal(i, k, y)))) F.rel(meta.rel, `${y}-07-01`, 'A', l, meta.rel === 'weo' ? 'IMF World Economic Outlook' : 'World Bank');
+      const used = new Set(isos.map((i) => anLag(i, k, y)?.y).filter(Boolean));
+      for (const uy of used) F.rel(meta.rel, `${uy}-07-01`, 'A', l, meta.rel === 'weo' ? 'IMF World Economic Outlook' : 'World Bank');
+      if (used.size > 1 || (used.size && !used.has(y))) lagged = true;
     }
     const relSrc = D.rel; D.rel = { ...(AN.rel || {}), ...(relSrc || {}) };  // release dates from the same pipeline run
     const h = F.html(); D.rel = relSrc;
-    const notes = [`Calendar year ${y} (January–December), as currently published by each source.`];
+    const notes = [`Calendar year ${y} (January–December), as ${D.rebuilt ? `known on ${mdy(D.asof_view)}, with figures as published today` : 'currently published by each source'}.`];
+    if (lagged) notes.push(`Where a source has not published ${y} yet, its latest year is shown with that year in brackets, e.g. "81.2 (${y - 1})".`);
     if (y >= est) notes.push(`IMF figures for ${est} are current-year estimates (*); recent years can still be revised by the source.`);
     else if (y >= est - 2) notes.push('IMF figures for the most recent years can still be estimates for some countries and may be revised.');
     return h + `<div class="foot">${notes.map((t) => `<p class="fn">${esc(t)}</p>`).join('')}</div>`;
   }
   async function renderYears() {
     await loadAnnual();
-    if (!AN.years) { $('ytbl').innerHTML = '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>'; return; }
+    if (!AN.years) { $('ytbl').innerHTML = pend('Fills in on the next automated run.'); return; }
     if (YEAR === null) YEAR = AN.estimate_from - 1;
     const sel = $('ysel');
-    if (!sel.options.length) { for (let y = AN.years[1]; y >= AN.years[0]; y--) sel.insertAdjacentHTML('beforeend', `<option value="${y}">${y}${y >= AN.estimate_from ? ' (est.)' : ''}</option>`); sel.addEventListener('change', () => { YEAR = +sel.value; renderYears(); if (openIdx !== null) showDetail(openIdx); }); }
+    const sk = AN.years.join('-') + ':' + AN.estimate_from;
+    if (sel.dataset.k !== sk) { sel.innerHTML = ''; sel.dataset.k = sk; for (let y = AN.years[1]; y >= AN.years[0]; y--) sel.insertAdjacentHTML('beforeend', `<option value="${y}">${y}${y >= AN.estimate_from ? ' (est.)' : ''}</option>`); }
+    if (!sel.dataset.on) { sel.dataset.on = 1; sel.addEventListener('change', () => { YEAR = +sel.value; renderYears(); if (openIdx !== null) showDetail(openIdx); }); }
+    if (YEAR > AN.years[1] || YEAR < AN.years[0]) YEAR = Math.min(AN.years[1], AN.estimate_from - 1);
     sel.value = String(YEAR);
     document.querySelectorAll('.yfil button').forEach((b) => b.classList.toggle('on', b.dataset.y === yfilt));
     const g20 = new Set(AN.g20 || []);
     const isos = Object.keys(AN.data).filter((i) => (yfilt === 'all' || g20.has(i) || yq) && (!yq || (AN.names[i] || '').toLowerCase().includes(yq)))
       .sort((a, b) => (anVal(b, 'gdp_usd', YEAR) ?? -1) - (anVal(a, 'gdp_usd', YEAR) ?? -1));
     const star = YEAR >= AN.estimate_from ? '*' : '';
-    $('ytbl').innerHTML = isos.length ? table(['Country', ...YCOLS.map((c) => c[1])], isos.map((i) => `<tr><td>${esc(AN.names[i])}</td>${YCOLS.map(([k, , f, good]) => { const v = anVal(i, k, YEAR);
-      return `<td class="${good ? cls(v, good > 0) : ''}">${ok(v) ? f(v) + (AN.keys[k]?.rel === 'weo' ? star : '') : '<span class="na">—</span>'}</td>`; }).join('')}</tr>`))
+    $('ytbl').innerHTML = isos.length ? table(['Country', ...YCOLS.map((c) => c[1])], isos.map((i) => `<tr><td>${esc(AN.names[i])}</td>${YCOLS.map(([k, , f, good]) => { const x = anLag(i, k, YEAR);
+      return `<td class="${good && x ? cls(x.v, good > 0) : ''}">${anCell(x, f, k, star)}</td>`; }).join('')}</tr>`))
       : '<p class="sub" style="padding:14px">No match.</p>';
     $('f-years').innerHTML = yearFoot(YEAR, isos);
   }
   document.querySelectorAll('.yfil button').forEach((b) => b.addEventListener('click', () => { yfilt = b.dataset.y; renderYears(); }));
   $('yq').addEventListener('input', (ev) => { yq = ev.target.value.trim().toLowerCase(); renderYears(); });
   renderYears();
+
+  // ---------------- date picker: the whole site as of a chosen date ----------------
+  const ASOF = $('asof'), TODAY = String(LIVE.asof?.today || LIVE.generated_at || '').slice(0, 10), EARLY = LIVE.asof?.earliest, A0 = LIVE.asof?.archive_start;
+  let PACKS = null, ARCHIDX = null, SER_LIVE = null, AN_LIVE = null, VIEW = TODAY;
+  if (ASOF) { ASOF.max = TODAY; if (EARLY) ASOF.min = EARLY; ASOF.value = TODAY; }
+  async function getJSON(url) {
+    const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+    const buf = new Uint8Array(await r.arrayBuffer());
+    if (buf[0] === 0x1f && buf[1] === 0x8b) {
+      if (typeof DecompressionStream === 'undefined') throw new Error('this browser cannot open archived snapshots');
+      return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).json();
+    }
+    return JSON.parse(new TextDecoder().decode(buf));
+  }
+  const dow = (ds) => new Date(ds + 'T00:00:00Z').getUTCDay();
+  function banner(mode, ds, extra = '') {
+    const b = $('asofban'); if (!b) return;
+    const wk = dow(ds) === 0 || dow(ds) === 6 ? ' · a weekend: each panel shows the latest data on or before it' : '';
+    const txt = mode === 'live' ? `Viewing ${mdy(ds)} · latest data`
+      : mode === 'archive' ? `Viewing ${mdy(ds)} · as shown on that date${extra}${wk}`
+      : mode === 'rebuilt' ? `Viewing ${mdy(ds)} · rebuilt from data as published today; figures include later revisions · each figure counts as released after its source's usual delay (see Method)${wk}`
+      : mode === 'loading' ? `Loading ${mdy(ds)}…` : extra;
+    b.textContent = txt; b.className = 'asofban mono ' + mode;
+  }
+  async function goDate(ds) {
+    if (!ds || ds >= TODAY) ds = TODAY;
+    let note = '';
+    if (EARLY && ds < EARLY) { note = ` (earliest date with a score: ${mdy(EARLY)})`; ds = EARLY; }
+    if (ASOF) ASOF.value = ds;
+    VIEW = ds;
+    try { const u = new URL(location.href); if (ds === TODAY) u.searchParams.delete('date'); else u.searchParams.set('date', ds); history.replaceState(null, '', u); } catch (_) { /* file:// */ }
+    banner('loading', ds);
+    let mode = 'live', extra = '';
+    try {
+      if (ds === TODAY) { if (SER && D !== LIVE) SER = SER_LIVE; D = LIVE; SER = SER_LIVE; AN = AN_LIVE; }
+      else {
+        if (D === LIVE) { SER_LIVE = SER; AN_LIVE = AN; }
+        if (A0 && ds >= A0 && !ARCHIDX) ARCHIDX = await getJSON('data/archive/index.json').catch(() => ({ dates: {} }));
+        const snaps = A0 && ds >= A0 ? Object.keys(ARCHIDX?.dates || {}).filter((x) => x <= ds).sort() : [];
+        if (snaps.length) {
+          const sd = snaps[snaps.length - 1], rec = ARCHIDX.dates[sd];
+          const [h, s, a] = await Promise.all([getJSON('data/archive/' + rec.h), getJSON('data/archive/' + rec.s).catch(() => ({})), getJSON('data/archive/' + rec.a).catch(() => ({ data: {} }))]);
+          D = h; SER = s; AN = a; mode = 'archive';
+          for (const e of D.economies || []) if (e.history?.length) (SER[e.iso3] = SER[e.iso3] || {}).score = e.history.map(([x, v]) => [x, Math.round(v * 10) / 10]);
+          if (sd !== ds) extra = ` (snapshot of ${mdy(sd)}, the latest on or before it)`;
+        } else {
+          if (!PACKS) { banner('loading', ds); PACKS = await window.WELEngine.loadPacks(); }
+          await new Promise((r) => setTimeout(r, 0));
+          const R = window.WELEngine.build(PACKS, ds, LIVE);
+          D = R.D; SER = R.SER; AN = R.AN; mode = 'rebuilt';
+        }
+      }
+    } catch (err) {
+      D = LIVE; SER = SER_LIVE; AN = AN_LIVE; ds = TODAY; if (ASOF) ASOF.value = TODAY;
+      bind(); refresh(); banner('error', ds, `Could not load that date (${err.message}). Showing ${mdy(TODAY)}.`); return;
+    }
+    bind(); refresh();
+    banner(mode, ds, extra + note);
+  }
+  function refresh() {
+    openIdx = null; $('detail').innerHTML = '';
+    drawCP(); renderAll(); renderYears();
+    if (scIso && $('schart').innerHTML) showHist(scIso);
+  }
+  if (ASOF) {
+    ASOF.addEventListener('change', () => goDate(ASOF.value));
+    $('asofnow')?.addEventListener('click', () => goDate(TODAY));
+  }
 
   // period toggle
   $('period').innerHTML = PERS.map((p, i) => `<button data-p="${i}" title="Change over ${PWORD[i]}">${p}</button>`).join('');
@@ -654,6 +871,8 @@
     renderAll();
   }));
   renderAll();
+  banner('live', TODAY);
+  { const q0 = new URLSearchParams(location.search).get('date'); if (q0 && /^\d{4}-\d{2}-\d{2}$/.test(q0) && q0 < TODAY) goDate(q0); }
 
   // ---------------- formulas & status (not period-dependent) ----------------
   const FX = [
@@ -665,7 +884,7 @@
     ['Misery index', '\\text{Misery} = \\pi + u', 'Inflation plus unemployment.'],
     ["Okun's law (output gap)", '\\text{gap} \\approx -2\\,(u - \\bar{u})', 'Each point of unemployment above its 10-year average ≈ 2% of output lost.'],
     ['Taylor rule', 'i^{*} = r^{*} + \\pi + 0.5(\\pi - 2) + 0.5\\,\\text{gap}', 'Where the policy rate "should" be given inflation and slack (r* = 0.5%).'],
-    ['Sahm rule', '\\bar{u}_{3m,t} - \\min_{12m}\\bar{u}_{3m} \\geq 0.5', 'A recession signal when 3-month average unemployment rises 0.5 points above its 12-month low.'],
+    ['Sahm rule', '\\bar{u}_{3m,t} - \\min_{t-12 \\le s \\le t-1}\\bar{u}_{3m,s} \\geq 0.5', 'A recession signal when the 3-month average of monthly unemployment rises 0.5 points or more above its lowest 3-month average over the prior 12 months. Monthly data only; n/a where a country has no monthly unemployment series.'],
     ['Debt dynamics', '\\Delta d = \\frac{r - g}{1 + g}\\,d - pb', 'r = interest rate, g = nominal growth, d = debt/GDP, pb = primary balance.'],
     ['Debt-stabilizing primary balance', 'pb^{*} = \\frac{r - g}{1 + g}\\,d', 'The budget balance before interest that holds debt/GDP flat.'],
     ['Breakeven inflation', '\\pi^{e}_{10y} = y_{10y}^{\\text{nominal}} - y_{10y}^{\\text{real}}', 'What bond markets expect inflation to average over 10 years.'],
@@ -685,12 +904,45 @@
   const links = [...document.querySelectorAll('nav a')];
   const byId = Object.fromEntries(links.map((a) => [a.getAttribute('href').slice(1), a]));
   const secs = Object.keys(byId).map((id) => document.getElementById(id)).filter(Boolean);
+  // the change-period toggle only shows in sections whose figures follow it (the date picker always shows)
+  const PERSEC = new Set(['scorecard', 'fundamentals', 'trade', 'energy', 'commodities', 'markets', 'people']);
+  // when the section links don't fit across the header, they move into a Sections menu
+  const nav = document.querySelector('header.bar nav'), btn = document.getElementById('navbtn');
+  const fit = () => {
+    document.body.classList.remove('navmenu'); nav.classList.remove('open'); btn.setAttribute('aria-expanded', 'false');
+    const gap = parseFloat(getComputedStyle(nav).columnGap) || 0;
+    const need = links.reduce((s, a) => s + a.getBoundingClientRect().width, 0) + gap * (links.length - 1);
+    if (need > nav.clientWidth + 1) document.body.classList.add('navmenu');
+    hdrVar();
+  };
+  // sections stop just below the header, whatever its height
+  const hdrVar = () => document.documentElement.style.setProperty('--hdr', document.querySelector('header.bar').offsetHeight + 'px');
+  btn.addEventListener('click', (ev) => { ev.stopPropagation(); const o = nav.classList.toggle('open'); btn.setAttribute('aria-expanded', String(o)); });
+  links.forEach((a) => a.addEventListener('click', () => { nav.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }));
+  document.addEventListener('click', (ev) => { if (!nav.contains(ev.target)) { nav.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); } });
+  addEventListener('resize', fit); fit(); document.fonts?.ready.then(fit);
+  // a jump from the section links: let it finish before the header row may change height, then settle on the section
+  let jumping = 0;
+  links.forEach((a) => a.addEventListener('click', (ev) => {
+    const sec = document.getElementById(a.getAttribute('href').slice(1)); if (!sec) return;
+    ev.preventDefault(); clearTimeout(jumping);
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const done = () => { clearTimeout(jumping); jumping = 0; removeEventListener('scrollend', done); pick(); requestAnimationFrame(() => sec.scrollIntoView({ behavior: 'instant', block: 'start' })); history.replaceState(null, '', location.pathname + location.search + '#' + sec.id); };
+    addEventListener('scrollend', done); jumping = setTimeout(done, 1600);
+  }));
   const set = (id) => { links.forEach((a) => a.classList.toggle('on', a === byId[id]));
+    if (byId[id]) btn.textContent = byId[id].textContent + ' ▾';
+    const hdr = document.querySelector('header.bar'), h0 = hdr.offsetHeight;
+    document.body.classList.toggle('noper', !PERSEC.has(id));
+    const dh = hdr.offsetHeight - h0;            // keep the page still when the header row appears or goes (narrow screens)
+    if (dh && scrollY > 0 && !jumping) window.scrollBy({ top: dh, behavior: 'instant' });
+    if (dh) hdrVar();
     const a = byId[id], n = a && a.parentNode;
     if (n && n.scrollWidth > n.clientWidth) n.scrollTo({ left: a.offsetLeft - n.offsetLeft - n.clientWidth / 2 + a.offsetWidth / 2, behavior: 'smooth' }); };
   let ticking = false;
   const pick = () => { ticking = false; let cur = secs[0]?.id;
-    for (const sec of secs) if (sec.getBoundingClientRect().top <= 110) cur = sec.id;
+    const lim = document.querySelector('header.bar').offsetHeight + 12;
+    for (const sec of secs) if (sec.getBoundingClientRect().top <= lim) cur = sec.id;
     if (cur) set(cur); };
   addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(pick); } }, { passive: true });
   pick();

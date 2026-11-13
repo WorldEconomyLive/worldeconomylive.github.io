@@ -65,6 +65,8 @@ def set_rel(key, source, released=None, basis="source", label=None):
     'daily' (source publishes each business day; the latest observation date is the publication day), or None."""
     cur = REL.get(key)
     released = parse_when(released) if released else None
+    if released and released > (datetime.utcnow() + pd.Timedelta(days=1)).strftime("%Y-%m-%d"):
+        released = None                     # never trust a date in the future
     if cur and cur.get("released") and (not released or cur["released"] >= released):
         return
     REL[key] = {"source": source, "released": released, "basis": basis if released else None, "label": label}
@@ -158,7 +160,7 @@ def oecd_release(flow, key):
     try:
         r = _get(f"{OECD}/contentconstraint/{agency}/CR_A_{fid}/", timeout=60, tries=2)
         found = re.findall(r'validFrom="([^"]+)"', r.text) or re.findall(r"<(?:\w+:)?ValidFrom>([^<]+)<", r.text)
-        set_rel(key, "OECD", max(found) if found else None)
+        set_rel(key, "OECD", max(found) if found else None, basis="dataset")
     except Exception:
         set_rel(key, "OECD", None)
 
@@ -287,9 +289,45 @@ def dbnomics(series_id: str) -> pd.Series:
     return _series(vals, [_period_to_ts(p) for p in d["period"]], series_id)
 
 
+_DM_LABEL = {}
+
+
+def weo_datamapper(subj):
+    """IMF DataMapper API: the current WEO edition, served by the IMF itself. Returns {iso3: annual series}."""
+    base = "https://www.imf.org/external/datamapper/api/v1"
+    hdr = {"User-Agent": "Mozilla/5.0 (compatible; WorldEconomyLive/1.0)", "Accept": "application/json"}
+    j = _get(f"{base}/{subj}", timeout=90, tries=3, headers=hdr).json()
+    vals = (j.get("values") or {}).get(subj) or {}
+    out = {}
+    for iso, by in vals.items():
+        if len(iso) != 3 or not by:
+            continue
+        try:
+            out[iso] = _series(list(by.values()), [f"{y}-07-01" for y in by.keys()], iso)
+        except RuntimeError:
+            pass
+    if len(out) < 50:
+        raise RuntimeError("DataMapper returned too few countries")
+    if not _DM_LABEL:
+        try:
+            ind = _get(f"{base}/indicators", timeout=60, tries=2, headers=hdr).json().get("indicators", {})
+            src = str((ind.get(subj) or {}).get("source", ""))
+            m = re.search(r"(January|April|July|October)\s+(\d{4})", src)
+            _DM_LABEL["label"] = f"WEO {m.group(1)} {m.group(2)}" if m else "WEO (current edition)"
+        except Exception:
+            _DM_LABEL["label"] = "WEO (current edition)"
+        set_rel("weo", "IMF World Economic Outlook (IMF DataMapper)", None, label=_DM_LABEL["label"])
+    return out
+
+
 def weo_all(code, releases):
-    """All countries for one WEO subject.unit. Returns ({iso3: series}, release_used)."""
+    """All countries for one WEO subject.unit. Returns ({iso3: series}, release_used).
+    The IMF's own DataMapper API comes first: the DBnomics mirror can lag several WEO editions."""
     subj, unit = code.split(".")
+    try:
+        return weo_datamapper(subj), _DM_LABEL.get("label", "WEO (current edition)")
+    except Exception:
+        pass
     dims = json.dumps({"weo-subject": [subj], "unit": [unit]})
     for rel in releases:
         try:
@@ -364,7 +402,8 @@ def worldbank_all(indicator: str, since=2003) -> pd.DataFrame:
     j = _get(url, timeout=150).json()
     if not isinstance(j, list) or len(j) < 2 or j[1] is None:
         raise RuntimeError("no data")
-    set_rel(f"wb:{indicator}", "World Bank", (j[0] or {}).get("lastupdated"))
+    set_rel(f"wb:{indicator}", "World Bank", (j[0] or {}).get("lastupdated"), basis="dataset",
+            label="World Development Indicators")
     rows = [{"iso3": x["countryiso3code"], "year": int(x["date"]), "value": x["value"]}
             for x in j[1] if x.get("value") is not None and x.get("countryiso3code")]
     if not rows:
@@ -536,7 +575,7 @@ def portwatch_release(service, key):
     try:
         j = _get(f"{ARC}/{service}/FeatureServer/0?f=json", timeout=60, tries=2).json()
         ei = j.get("editingInfo") or {}
-        set_rel(key, "IMF PortWatch", ei.get("dataLastEditDate") or ei.get("lastEditDate"))
+        set_rel(key, "IMF PortWatch", ei.get("dataLastEditDate") or ei.get("lastEditDate"), basis="dataset")
     except Exception:
         set_rel(key, "IMF PortWatch", None)
 
@@ -656,7 +695,7 @@ def eurostat_jsonstat(dataset, dims, since):
     """Eurostat's own dissemination API (JSON-stat 2.0), always current. Returns {iso3: series}."""
     q = "&".join(f"{k}={v[0]}" for k, v in dims.items()) + f"&sinceTimePeriod={since}&lang=EN"
     js = _get(f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset}?{q}", timeout=120).json()
-    set_rel(f"eurostat:{dataset}", "Eurostat", js.get("updated"))
+    set_rel(f"eurostat:{dataset}", "Eurostat", js.get("updated"), basis="dataset")
     ids, size, vals = js["id"], js["size"], js.get("value", {})
     idx = {d: js["dimension"][d]["category"]["index"] for d in ids}
     pos = {d: {i: c for c, i in idx[d].items()} if isinstance(idx[d], dict) else dict(enumerate(idx[d])) for d in ids}
