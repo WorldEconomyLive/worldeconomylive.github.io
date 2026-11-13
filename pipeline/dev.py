@@ -89,7 +89,7 @@ def _fetch(key):
         e = MIX.get("energy")
         if e is None:
             raise RuntimeError("EIA energy data not available")
-        w = e[e.fuel.isin(ENERGY_ORDER)].pivot_table(index=["iso3", "year"], columns="fuel", values="qbtu", aggfunc="sum").fillna(0)
+        w = e[e.fuel.isin(ENERGY_ORDER + ["lowcarbon"])].pivot_table(index=["iso3", "year"], columns="fuel", values="qbtu", aggfunc="sum").fillna(0)
         tot = w.sum(axis=1)
         fos = w.reindex(columns=["oil", "gas", "coal"]).fillna(0).sum(axis=1)
         v = (fos[tot > 0] / tot[tot > 0] * 100).rename("value").reset_index()
@@ -130,7 +130,8 @@ def build(names):
     mix, mix_rel = {}, {}
     if MIX.get("energy") is not None:
         e = MIX["energy"]
-        mix["energy"] = {"order": ENERGY_ORDER, "rel": "eia_intl", "data": {i: v for i, v in _shares(e[e.fuel.isin(ENERGY_ORDER)], "qbtu", "fuel", ENERGY_ORDER).items() if i in names}}
+        order = [f for f in ENERGY_ORDER + ["lowcarbon"] if f in set(e.fuel)]
+        mix["energy"] = {"order": order, "rel": "eia_intl", "data": {i: v for i, v in _shares(e[e.fuel.isin(order)], "qbtu", "fuel", order).items() if i in names}}
         mix_rel["eia_intl"] = S.REL.get("eia_intl")
     if MIX.get("elec") is not None:
         mix["elec"] = {"order": ELEC_ORDER, "rel": "ember_yearly", "data": {i: v for i, v in _shares(MIX["elec"], "twh", "source", ELEC_ORDER).items() if i in names}}

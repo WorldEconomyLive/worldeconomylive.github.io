@@ -100,9 +100,9 @@ td .chg{font-size:10px}
 
 .asof{display:inline-flex;align-items:center;gap:6px}.asof input{background:#000;color:var(--ink);border:1px solid var(--line2);border-radius:99px;padding:4px 10px;font-family:var(--mono);font-size:11px;color-scheme:dark;outline:none}.asof input:focus{border-color:var(--ink2)}
 .asof button{font-size:10px;letter-spacing:.08em;text-transform:uppercase;background:none;color:var(--ink2);border:1px solid var(--line2);border-radius:99px;padding:4px 9px;cursor:pointer}.asof button:hover{color:var(--ink)}
-.asofban{flex-basis:100%;font-size:10.5px;letter-spacing:.04em;color:var(--ink2);padding:2px 0 0}.asofban.rebuilt{color:var(--warm)}.asofban.archive{color:#8fb8ff}.asofban.error{color:var(--neg)}
+.asofban{flex:1 1 auto;min-width:0;font-size:10.5px;letter-spacing:.04em;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.asofban.rebuilt{color:var(--warm)}.asofban.archive{color:#8fb8ff}.asofban.error{color:var(--neg)}
 .mapfoot .cov{font-size:10px;letter-spacing:.12em;color:var(--mute);margin:8px 0 0}
-@media (max-width:760px){.asof{order:5}.asof input{font-size:10px;padding:3px 8px}.asofban{order:6;font-size:10px}}
+@media (max-width:760px){.asof{order:5}.asof input{font-size:10px;padding:3px 8px}.asofban{order:6;font-size:10px;flex-basis:100%;white-space:normal}}
 .pergrp{display:inline-flex;align-items:center;gap:12px}.noper .pergrp{display:none}
 .navbtn{display:none;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;background:none;color:var(--ink);border:1px solid var(--line2);border-radius:99px;padding:5px 12px;cursor:pointer;margin-left:auto}
 .navmenu .navbtn{display:inline-block}
@@ -126,3 +126,4 @@ td .chg{font-size:10px}
 .mixk i{display:inline-block;width:9px;height:9px;border-radius:2px}
 #mixtbl tr.click{cursor:pointer}#mixtbl tr.click:hover td{background:rgba(255,255,255,.03)}#mixtbl td:first-child,#mixtbl th:first-child{text-align:left}#mixtbl .mixcell .mixbar{min-width:220px}
 @media (max-width:600px){#mixtbl .mixcell .mixbar{min-width:150px}}
+.perbar>*:not(.asofban){flex-shrink:0;white-space:nowrap}.perbar .plab{white-space:nowrap}

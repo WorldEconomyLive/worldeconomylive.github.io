@@ -374,9 +374,14 @@ def weo_sdmx(subj):
             cc = next(c for c in df.columns if c.upper() in ("COUNTRY", "REF_AREA") or c.upper().startswith("COUNTRY"))
             tc = next(c for c in df.columns if c.upper() == "TIME_PERIOD")
             vc = next(c for c in df.columns if c.upper() == "OBS_VALUE")
-            df[vc] = pd.to_numeric(df[vc], errors="coerce") * _sdmx_mult(df)
-            if subj in DM_BILLIONS:                 # the portal sends full units; DataMapper (and registry scales) use billions
-                df[vc] = df[vc] / 1e9
+            df[vc] = pd.to_numeric(df[vc], errors="coerce")
+            if subj in DM_BILLIONS:
+                # DataMapper (and the registry scales) use billions. The portal's scale flag has not matched its values
+                # in practice, so decide by size: no country's GDP reaches a million billion dollars.
+                if df[vc].abs().median() > 1e6:
+                    df[vc] = df[vc] / 1e9
+            else:
+                df[vc] = df[vc] * _sdmx_mult(df)
             out = {}
             for iso, g in df.groupby(cc):
                 iso = ALIAS3.get(str(iso), str(iso))
@@ -835,29 +840,35 @@ def ember_yearly() -> pd.DataFrame:
 
 # ---------------- Energy consumption by fuel (U.S. EIA International Energy Statistics, public domain) ----------------
 EIA_INTL_URLS = ["https://api.eia.gov/bulk/INTL.zip", "http://api.eia.gov/bulk/INTL.zip"]
-ENERGY_FUELS = ("oil", "gas", "coal", "nuclear", "renewables")
+ENERGY_FUELS = ("oil", "gas", "coal", "nuclear", "renewables", "lowcarbon")
 
 
 def _eia_fuel(name):
-    n = str(name).lower().split(",")[0].strip()
-    if not n.endswith("consumption") or "per capita" in n or "electricity" in n or "intensity" in n:
+    """Fuel group from an EIA series name such as 'Coal consumption, Germany, Annual' or
+    'Nuclear, renewables, and other consumption, ...'. Components (wind, solar, ...) and non-primary series are skipped."""
+    n = str(name).lower()
+    if " consumption" not in n:
         return None
-    n = n[: -len("consumption")].strip()
-    if n in ("total energy", "primary energy", "total primary energy"):
+    n = n.split(" consumption")[0].strip()
+    if any(w in n for w in ("per capita", "electricity", "intensity", "per gdp", "net generation")):
+        return None
+    if n.startswith("total") or "primary energy" in n:
         return "total"
+    if "nuclear" in n and "renew" in n:
+        return "_nre"
     if n.startswith("coal"):
         return "coal"
     if "natural gas" in n:
         return "gas"
-    if n.startswith("petroleum") or n.startswith("crude oil") or n.startswith("oil"):
+    if n.startswith(("petroleum", "crude oil", "oil", "liquids", "other liquids")):
         return "oil"
     if n.startswith("nuclear"):
         return "nuclear"
-    if n.startswith("renewables") or n.startswith("renewable"):
+    if n.startswith("renew"):
         return "renewables"
-    if n.startswith("hydroelectric") or n.startswith("hydro"):
+    if n.startswith("hydro"):
         return "_hydro"
-    if n.startswith("non-hydroelectric renewables") or n.startswith("other renewables"):
+    if n.startswith(("non-hydro", "nonhydro", "other renewables")):
         return "_nonhydro"
     return None
 
@@ -893,15 +904,25 @@ def eia_energy() -> pd.DataFrame:
                             pass
             df = pd.DataFrame(rows, columns=["iso3", "year", "fuel", "qbtu"]).drop_duplicates(["iso3", "year", "fuel"])
             if df.iso3.nunique() < 50:
-                raise RuntimeError(f"only {df.iso3.nunique()} countries")
+                raise RuntimeError(f"only {df.iso3.nunique()} countries; fuels seen: {sorted(df.fuel.unique())[:8]}")
             w = df.pivot_table(index=["iso3", "year"], columns="fuel", values="qbtu", aggfunc="first")
-            if "renewables" not in w.columns:
-                w["renewables"] = w.get("_hydro", 0).fillna(0) + w.get("_nonhydro", 0).fillna(0)
+            col = lambda c: w[c] if c in w.columns else pd.Series(float("nan"), index=w.index)   # noqa: E731
+            fos = col("oil").fillna(0) + col("gas").fillna(0) + col("coal").fillna(0)
+            ren = col("renewables")
+            parts = col("_hydro").fillna(0) + col("_nonhydro").fillna(0)
+            ren = ren.fillna(parts.where(parts > 0))
+            nuc = col("nuclear")
+            ren = ren.fillna((col("_nre") - nuc.fillna(0)).where(col("_nre").notna() & nuc.notna()))
+            # whatever the split, low-carbon = total - fossil, so the fossil share is always right
+            low = col("_nre").fillna(nuc.fillna(0) + ren.fillna(0) if (nuc.notna().any() or ren.notna().any()) else float("nan"))
+            low = low.fillna(col("total") - fos)
+            w2 = pd.DataFrame({"oil": col("oil"), "gas": col("gas"), "coal": col("coal")})
+            if nuc.notna().sum() > len(w) * 0.5 and ren.notna().sum() > len(w) * 0.5:
+                w2["nuclear"], w2["renewables"] = nuc, ren
             else:
-                alt = w.get("_hydro", pd.Series(0, index=w.index)).fillna(0) + w.get("_nonhydro", pd.Series(0, index=w.index)).fillna(0)
-                w["renewables"] = w["renewables"].fillna(alt.where(alt > 0))
-            keep = [c for c in ENERGY_FUELS + ("total",) if c in w.columns]
-            out = w[keep].reset_index().melt(id_vars=["iso3", "year"], var_name="fuel", value_name="qbtu").dropna()
+                w2["lowcarbon"] = low.clip(lower=0)
+            w2["total"] = col("total")
+            out = w2.reset_index().melt(id_vars=["iso3", "year"], var_name="fuel", value_name="qbtu").dropna()
             set_rel("eia_intl", "U.S. Energy Information Administration, International Energy Statistics", resp.headers.get("Last-Modified"),
                     label="International Energy Statistics")
             return out

@@ -222,3 +222,28 @@ y = S.ember_yearly()
 u = y[y.iso3 == "USA"].set_index("source").twh
 assert u.to_dict() == {"coal": 600, "gas": 1800, "nuclear": 780, "solar": 300, "wind": 450}, u.to_dict()
 print("ember yearly ok")
+
+# EIA names as 'Nuclear, renewables, and other consumption': fossil share still right, low-carbon kept as one group
+lines = []
+for c in ["USA"] + [f"X{i:02d}" for i in range(60)]:
+    for prod, nm, v in (("44", "Total energy consumption", 100), ("5", "Petroleum and other liquids consumption", 36), ("26", "Natural gas consumption", 33),
+                        ("7", "Coal consumption", 10), ("79", "Nuclear, renewables, and other consumption", 21)):
+        lines.append(_json.dumps({"series_id": f"INTL.{prod}-2-{c}-QBTU.A", "name": f"{nm}, {c}, Annual", "data": [["2023", v]]}))
+buf2 = io.BytesIO()
+with zipfile.ZipFile(buf2, "w") as z:
+    z.writestr("INTL.txt", "\n".join(lines))
+S._get = lambda u, **k: types.SimpleNamespace(headers={}, content=buf2.getvalue())
+e = S.eia_energy()
+u = e[(e.iso3 == "USA") & (e.year == 2023)].set_index("fuel").qbtu.to_dict()
+assert u == {"oil": 36, "gas": 33, "coal": 10, "lowcarbon": 21, "total": 100}, u
+# portal GDP that carries a scale flag that does not match its values
+def sdmx_gdp2(u, **k):
+    if "datamapper" in u:
+        raise RuntimeError("HTTP 403")
+    lines = ["DATAFLOW,COUNTRY,INDICATOR,FREQUENCY,SCALE,TIME_PERIOD,OBS_VALUE"] + [f"IMF.RES:WEO,{c},NGDPD,A,9,2025,{v}" for c, v in [("USA", 30861300000000)] + [(f"X{i:02d}", 1e11) for i in range(60)]]
+    return types.SimpleNamespace(headers={}, text="\n".join(lines))
+S._get = sdmx_gdp2
+S.REL.pop("weo", None); S._WEO_FAIL.clear(); S._WEO_OK.clear()
+d, rel = S.weo_all("NGDPD.us_dollars", ["WEO:latest"])
+assert abs(d["USA"].iloc[-1] - 30861.3) < 1e-6, d["USA"]
+print("eia grouped low-carbon + portal scale flag ok")

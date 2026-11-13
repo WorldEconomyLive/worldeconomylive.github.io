@@ -226,8 +226,8 @@
     return null;
   };
   // energy and electricity by source (latest year within the age limit)
-  const MIXCOL = { oil: '#c9733f', gas: '#e0a94a', coal: '#7a6a5c', other_fossil: '#9b5f45', nuclear: '#a78bfa', renewables: '#3ee6c4', hydro: '#4aa3e0', wind: '#7dd3fc', solar: '#f5d76e', bio: '#7bc47f', other_ren: '#3ee6c4' };
-  const MIXLAB = { oil: 'Oil', gas: 'Gas', coal: 'Coal', other_fossil: 'Other fossil', nuclear: 'Nuclear', renewables: 'Renewables', hydro: 'Hydro', wind: 'Wind', solar: 'Solar', bio: 'Bioenergy', other_ren: 'Other renewables' };
+  const MIXCOL = { oil: '#c9733f', gas: '#e0a94a', coal: '#7a6a5c', other_fossil: '#9b5f45', nuclear: '#a78bfa', renewables: '#3ee6c4', lowcarbon: '#3ee6c4', hydro: '#4aa3e0', wind: '#7dd3fc', solar: '#f5d76e', bio: '#7bc47f', other_ren: '#3ee6c4' };
+  const MIXLAB = { oil: 'Oil', gas: 'Gas', coal: 'Coal', other_fossil: 'Other fossil', nuclear: 'Nuclear', renewables: 'Renewables', lowcarbon: 'Nuclear and renewables', hydro: 'Hydro', wind: 'Wind', solar: 'Solar', bio: 'Bioenergy', other_ren: 'Other renewables' };
   const mixPt = (kind, iso, year) => {
     const M = DV?.mix?.[kind], a = M?.data?.[iso]; if (!a) return null;
     const cut = Math.min(year ?? 9999, devCut());
@@ -957,7 +957,7 @@
       : mode === 'archive' ? `Viewing ${mdy(ds)} · as shown on that date${extra}${wk}`
       : mode === 'rebuilt' ? `Viewing ${mdy(ds)} · rebuilt from data as published today; figures include later revisions · each figure counts as released after its source's usual delay (see Method)${wk}`
       : mode === 'loading' ? `Loading ${mdy(ds)}…` : extra;
-    b.textContent = txt; b.className = 'asofban mono ' + mode;
+    b.textContent = txt; b.title = txt; b.className = 'asofban mono ' + mode;
   }
   async function goDate(ds) {
     if (!ds || ds >= TODAY) ds = TODAY;
