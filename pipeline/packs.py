@@ -9,6 +9,11 @@ from pathlib import Path
 
 import pandas as pd
 
+try:
+    import registry as R
+except ImportError:          # imported as pipeline.packs
+    from pipeline import registry as R
+
 EPOCH = pd.Timestamp("1970-01-01")
 
 
@@ -73,7 +78,7 @@ def write_packs(raw, meta, scores, out: Path):
     for iso3, H in raw.get("annual", {}).items():
         rec = {}
         for k, s in H.items():
-            if k == "gov_debt" and s is H.get("debt_wb"):
+            if k in R.WB_FALLBACK and s is H.get(R.WB_FALLBACK[k]):
                 continue                                 # World Bank fallback: the browser applies it itself
             s = s.dropna() if s is not None else None
             if s is None or not len(s):

@@ -221,7 +221,8 @@
         if (isW) o[k] = { label: weoK[k][0], unit: weoK[k][1], value: last(s), year: yr, source: 'IMF WEO', rel: 'weo', chg: change(s, AK[k] || 'pp', 'A'), estimate: yr >= ymd(d)[0] };
         else if (wbK[k]) { const j = ub(s.t, dn(yr - 10, 12, 31)) - 1; o[k] = { label: wbK[k][1], unit: wbK[k][2], value: last(s), year: yr, source: 'World Bank', estimate: false, rel: rk, chg: change(s, AK[k] || 'pct', 'A'), ten_years_ago: j >= 0 ? s.v[j] : null }; }
       }
-      if (!o.gov_debt && o.debt_wb) { o.gov_debt = { ...o.debt_wb, label: 'Government debt' }; h.gov_debt = h.debt_wb; }
+      // World Bank stand-ins where WEO has no series for the country (as the daily run does)
+      for (const [k, wk] of Object.entries(META.wb_fallback || { gov_debt: 'debt_wb' })) if (!o[k] && o[wk]) { o[k] = { ...o[wk], label: k === 'gov_debt' ? 'Government debt' : weoK[k] ? weoK[k][0] : o[wk].label }; h[k] = h[wk]; }
       if (Object.keys(o).length) out[iso3] = o;
     }
     return { allc: out, H };
@@ -525,11 +526,19 @@
   const label = (s) => (!ok(s) ? 'Pending' : s >= 60 ? 'Strong' : s >= 45 ? 'Steady' : s >= 35 ? 'Soft' : 'Stressed');
   const PNAME = { activity: 'Output', labor: 'Jobs', prices: 'Prices', trade: 'Trade' };
 
-  function headline(prices, ports) {
+  const BANDW = { Strong: 'strong', Steady: 'steady', Soft: 'soft', Stressed: 'under stress' };
+  const PWORD = { activity: 'output', labor: 'jobs', prices: 'prices', trade: 'trade' };
+  function headline(world, econ, prices, ports) {
+    if (!ok(world)) return 'Global economy: score pending.';
+    const lab = label(world), out = `Global economy ${BANDW[lab] || lab.toLowerCase()} (${world.toFixed(0)}).`;
     const vol = ports?.global?.total, oil = prices.find((p) => p.name === 'Brent crude')?.yoy;
-    if (ok(vol) && ok(oil)) { if (vol < -2 && oil > 15) return 'Supply shock: goods are moving less while prices rise.'; if (vol > 2 && oil < 0) return 'Expansion with easing costs: more trade, cheaper energy.'; }
-    if (ok(vol)) return vol < -2 ? 'Global trade is slowing.' : vol > 2 ? 'Global trade is growing.' : 'Global trade is flat.';
-    return 'Global economy: mixed signals.';
+    if (ok(vol) && ok(oil) && vol < -2 && oil > 15) return out + ' Main driver: a supply shock, with goods moving less while oil prices rise.';
+    const zs = {};
+    for (const e of Object.values(econ)) { if (!ok(e.score)) continue; for (const [k, v] of Object.entries(e.pillars || {})) if (ok(v)) (zs[k] = zs[k] || []).push(v); }
+    let bk = null, bm = 0;
+    for (const [k, v] of Object.entries(zs)) { const m = v.reduce((a, b) => a + b, 0) / v.length; if (bk === null || Math.abs(m) > Math.abs(bm)) { bk = k; bm = m; } }
+    if (bk !== null && Math.abs(bm) >= 0.1) return out + ` Main ${bm < 0 ? 'drag' : 'support'}: ${PWORD[bk] || bk}.`;
+    return out;
   }
   function drivers(econ, prices, ports) {
     const out = [], dir = (v) => (v > 0 ? 'up' : 'down');
@@ -565,7 +574,7 @@
       if (zs.length >= 2) e.contrib = Object.fromEntries(zs.map(([pk, v]) => [PNAME[pk], (15 * v) / zs.length]));
       e.label = label(e.score); e.coverage = `${zs.length}/4`;
       e.vitals = Object.fromEntries(META.vital_keys.filter((x) => f[x]).map((x) => [x, f[x]]));
-      e.fundamentals = Object.fromEntries(Object.entries(f).filter(([x]) => !META.vital_keys.includes(x)));
+      e.fundamentals = Object.fromEntries(Object.entries(f).filter(([x]) => !META.vital_keys.includes(x) && !(x.endsWith('_wb') && x !== 'debt_wb')));
       e.math = macroMath(e); e.derived = derive(e, e.fundamentals);
       SER[k] = historySeries(e, false);
       const tb = SER[k].trade_balance_12m; if (tb) (e.trade_m = e.trade_m || {}).balance_12m = tb[tb.length - 1][1];
@@ -651,7 +660,7 @@
     const wscore = rleSeries(SC.w.s, SC.day0, di);
     const D = {
       generated_at: live?.generated_at, weo_release: live?.weo_release, asof_view: dStr, rebuilt: true,
-      world: { score: ok(ws) ? ws : null, label: label(ws), headline: headline(prices, ports),
+      world: { score: ok(ws) ? ws : null, label: label(ws), headline: headline(ws, econ, prices, ports),
         breakdown: { 'economies (GDP-weighted)': avg, 'global stress': stress, stress_components: comps },
         trade_yoy: ports?.global?.total ?? null, countries: Object.keys(mapRows).length, tracked: ecoList.length,
         scored: Object.values(mapRows).filter((r) => ok(r.score)).length, chg: change(wscore, 'pts', 'D') },

@@ -51,7 +51,10 @@ ALL = ["USA", "CHN", "JPN", "DEU", "IND", "GBR", "FRA", "BRA", "NGA", "KEN", "PE
 S.weo_all = lambda code, rels: ({i: pd.Series(rng.uniform(1, 9, 37) if ("RPCH" in code or "PCPI" in code or "LUR" in code) else rng.uniform(-5, 120, 37) * (1e3 if "NGDPD" in code else 1),
                                                index=pd.to_datetime([f"{y}-07-01" for y in range(1990, 2027)])) for i in set(ALL)}, "WEO October 2026")
 S.bis_batch = lambda codes: {c: pd.Series(3 + rng.normal(0, 0.2, len(months)), index=months) for c in codes if c not in ("IS", "CR")}
-S.worldbank_all = lambda ind, since=2005: pd.DataFrame([{"iso3": i, "year": y, "value": float(rng.uniform(1, 80)) * (1e11 if "CD" in ind else 1)} for i in set(ALL) for y in range(2003, 2026)])
+WB_ONLY = ["XKX", "GRL"]      # World Bank has them, the (mock) IMF WEO does not: fallbacks + Kosovo map match
+S.worldbank_all = lambda ind, since=2005: pd.DataFrame([{"iso3": i, "year": y, "value": float(rng.uniform(1, 80)) * (1e11 if "CD" in ind else 1)} for i in set(ALL) | set(WB_ONLY) for y in range(2003, 2026)])
+S.owid_grapher = lambda slug: pd.DataFrame([{"iso3": i, "year": y, "value": float(rng.uniform(0.3, 9)) * (1e4 if "gdp" in slug else 1)} for i in set(ALL) | {"XKX"} for y in range(1960, 2024)])
+S.EMBER_CLEAN["df"] = pd.DataFrame([{"iso3": i, "year": y, "value": float(rng.uniform(5, 95))} for i in set(ALL) for y in range(2005, 2026)])
 pink_cols = ["Crude oil, average", "Crude oil, Brent", "Crude oil, WTI", "Natural gas, US", "Natural gas, Europe", "Liquefied natural gas, Japan",
              "Coal, Australian", "Iron ore, cfr spot", "Copper", "Aluminum", "Nickel", "Wheat, US HRW", "Maize", "Rice, Thai 5%", "Soybeans",
              "Sugar, world", "Coffee, Arabica", "Cocoa", "Cotton, A Index", "Beef", "Urea", "Gold", "Silver"]

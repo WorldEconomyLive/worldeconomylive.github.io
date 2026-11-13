@@ -226,21 +226,28 @@ class Rebuild:
         out = {k: np.full(N, np.nan) for k in ("activity", "labor", "prices", "trade")}
         yr = self.days.year.values
 
-        def ann(s, fn, extra=None):
+        def rk(key):
+            """Release rule: WEO, or the World Bank's when the series is the World Bank stand-in."""
+            fb = R.WB_FALLBACK.get(key)
+            return ("wb:" + R.WB[fb][0]) if fb and H.get(key) is not None and H.get(key) is H.get(fb) else "weo"
+
+        def ann(s, fn, key, extra=None):
             s = s.dropna().sort_index()
             if not len(s):
                 return np.full(N, np.nan)
-            k = avail_count(s, "weo", self.days)
-            lasty = np.where(k > 0, s.index.year.values[np.maximum(k - 1, 0)], -9999)
+            k = avail_count(s, rk(key), self.days)
+            years = s.index.year.values
+            k = np.minimum(k, np.searchsorted(years, yr, side="left"))     # completed years only, never the forecast year
+            lasty = np.where(k > 0, years[np.maximum(k - 1, 0)], -9999)
             arr = fn(s)
             v = arr[k]
-            ok = (k > 0) & (lasty >= yr - 1)
+            ok = (k > 0) & (lasty >= yr - R.ANNUAL_MAX_AGE)
             if extra is not None:
                 ok &= extra(k)
             return np.where(ok, v, np.nan)
         g = H.get("gdp_growth")
         if g is not None:
-            out["activity"] = ann(g, z_annual_prefix)
+            out["activity"] = ann(g, z_annual_prefix, "gdp_growth")
         a = out["activity"]
         out["activity"] = np.where(np.isnan(act_z), a, np.where(np.isnan(a), act_z, (a + act_z) / 2))
         u = H.get("unemployment_a")
@@ -251,10 +258,10 @@ class Rebuild:
                 d = s.diff().dropna()
                 zd = z_annual_prefix(d)
                 return -zd[map_prefix(s, d)]
-            out["labor"] = ann(uu, lab, extra=lambda k: k > 9)
+            out["labor"] = ann(uu, lab, "unemployment_a", extra=lambda k: k > 9)
         pi = H.get("inflation_a")
         if pi is not None:
-            out["prices"] = ann(pi, lambda s: z_annual_prefix(-(s - 2.0).abs()))
+            out["prices"] = ann(pi, lambda s: z_annual_prefix(-(s - 2.0).abs()), "inflation_a")
         out["trade"] = trade_p
         return out
 

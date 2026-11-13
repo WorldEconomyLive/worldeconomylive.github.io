@@ -389,7 +389,8 @@ ANNUAL_KIND = {"gdp_growth": "pp", "inflation_a": "pp", "unemployment_a": "pp", 
                "fertility": "pct", "life_exp": "pct", "health_spend": "pp", "net_migration": "abs", "gdp_pc": "pct",
                "gini": "pts", "urban": "pp", "exports_usd_a": "pct", "imports_usd_a": "pct", "net_exports": "pp",
                "consumption": "pp", "investment": "pp", "gov_consumption": "pp", "reserves_usd": "pct",
-               "reserves_months": "pct", "private_credit": "pp", "debt_wb": "pp"}
+               "reserves_months": "pct", "private_credit": "pp", "debt_wb": "pp",
+               "gdp_growth_wb": "pp", "inflation_wb": "pp", "unemployment_wb": "pp", "gdp_usd_wb": "pct"}
 MATH_KIND = {"real_rate": "bp", "misery": "pp", "curve": "bp", "taylor_gap": "bp", "taylor": "bp", "sahm": "pp",
              "output_gap": "pp", "nominal_growth": "pp", "r_minus_g": "pp", "pb_stabilizing": "pp", "fiscal_gap": "pp",
              "s_minus_i": "pp", "twin": "pp", "trade_balance_usd": "abs"}
@@ -423,22 +424,31 @@ def z_annual(s, years=15, min_n=8):
     return float(np.clip((s.iloc[-1] - med) / sd, -3, 3))
 
 
+def done_years(s):
+    """Completed calendar years only: the current year's WEO figure is a forecast and is never scored."""
+    if s is None:
+        return None
+    s = s.dropna()
+    s = s[s.index.year < TODAY.year]
+    return s if len(s) and s.index[-1].year >= TODAY.year - R.ANNUAL_MAX_AGE else None
+
+
 def annual_score(iso3, ports, power):
-    """Score for countries without monthly data: IMF WEO estimates for the current year vs that country's own
-    history, blended with port cargo and electricity where available. Same 50 + 15*z scale."""
+    """Score for countries without monthly data: completed years of IMF WEO (World Bank where WEO has none)
+    vs that country's own history, blended with port cargo and electricity where available. Same 50 + 15*z scale."""
     H, p = ANNUAL_HIST.get(iso3, {}), {}
-    g = H.get("gdp_growth")
-    if g is not None and len(g) and g.index[-1].year >= TODAY.year - 1:
+    g = done_years(H.get("gdp_growth"))
+    if g is not None:
         p["activity"] = z_annual(g)
     pz = power.get(iso3, {}).get("z")
     if pz is not None:
         p["activity"] = pz if p.get("activity") is None else (p["activity"] + pz) / 2
-    u = H.get("unemployment_a")
-    if u is not None and len(u) > 9 and u.index[-1].year >= TODAY.year - 1:
+    u = done_years(H.get("unemployment_a"))
+    if u is not None and len(u) > 9:
         z = z_annual(u.diff().dropna())
         p["labor"] = None if z is None else -z
-    pi = H.get("inflation_a")
-    if pi is not None and len(pi) and pi.index[-1].year >= TODAY.year - 1:
+    pi = done_years(H.get("inflation_a"))
+    if pi is not None:
         p["prices"] = z_annual(-(pi - 2.0).abs())
     if ports and iso3 in ports.get("economies", {}):
         p["trade"] = float(np.clip(ports["economies"][iso3] / 10, -3, 3))
@@ -451,14 +461,12 @@ def annual_score(iso3, ports, power):
 def unscored_reason(iso3, ports, power):
     """Why a country on the map has no score: which of the four pillars have data."""
     H, have = ANNUAL_HIST.get(iso3, {}), []
-    g = H.get("gdp_growth")
-    if (g is not None and len(g) and g.index[-1].year >= TODAY.year - 1) or power.get(iso3, {}).get("z") is not None:
+    if done_years(H.get("gdp_growth")) is not None or power.get(iso3, {}).get("z") is not None:
         have.append("output")
-    u = H.get("unemployment_a")
-    if u is not None and len(u) > 9 and u.index[-1].year >= TODAY.year - 1:
+    u = done_years(H.get("unemployment_a"))
+    if u is not None and len(u) > 9:
         have.append("jobs")
-    pi = H.get("inflation_a")
-    if pi is not None and len(pi) and pi.index[-1].year >= TODAY.year - 1:
+    if done_years(H.get("inflation_a")) is not None:
         have.append("prices")
     if ports and iso3 in ports.get("economies", {}):
         have.append("trade")
@@ -509,12 +517,14 @@ def annual_block():
             S.log(f"worldbank.{ind}", True, f"{df.iso3.nunique()} countries")
         except Exception as e:
             S.log(f"worldbank.{ind}", False, e)
-    # fall back to World Bank debt when WEO has none
+    # fall back to the World Bank when WEO has no series for a country (same object, so packs can tell)
     for iso3, d in allc.items():
-        if "gov_debt" not in d and "debt_wb" in d:
-            d["gov_debt"] = dict(d["debt_wb"], label="Government debt")
-            if "debt_wb" in ANNUAL_HIST.get(iso3, {}):
-                ANNUAL_HIST[iso3]["gov_debt"] = ANNUAL_HIST[iso3]["debt_wb"]
+        for key, wbk in R.WB_FALLBACK.items():
+            if key not in d and wbk in d:
+                lab = R.WEO[key][1] if key in R.WEO else d[wbk]["label"]
+                d[key] = dict(d[wbk], label=lab if key != "gov_debt" else "Government debt")
+                if wbk in ANNUAL_HIST.get(iso3, {}):
+                    ANNUAL_HIST[iso3][key] = ANNUAL_HIST[iso3][wbk]
     return allc, rel_used
 
 
@@ -1075,6 +1085,9 @@ YEAR_KEYS = {  # key: (label, unit, release key)
     "fertility": ("Births per woman", "", "wb:SP.DYN.TFRT.IN"), "health_spend": ("Health spending", "% of GDP", "wb:SH.XPD.CHEX.GD.ZS"),
     "net_migration": ("Net migration", "people", "wb:SM.POP.NETM"), "urban": ("Urban population", "% of pop.", "wb:SP.URB.TOTL.IN.ZS"),
     "gini": ("Inequality (Gini)", "0-100", "wb:SI.POV.GINI"), "reserves_usd": ("FX reserves", "US$", "wb:FI.RES.TOTL.CD"),
+    # World Bank stand-ins, used by the readouts only where the IMF WEO has no series for the country
+    "gdp_growth_wb": ("GDP growth", "%", "wb:NY.GDP.MKTP.KD.ZG"), "inflation_wb": ("Inflation", "%", "wb:FP.CPI.TOTL.ZG"),
+    "unemployment_wb": ("Unemployment", "%", "wb:SL.UEM.TOTL.ZS"), "gdp_usd_wb": ("GDP", "US$", "wb:NY.GDP.MKTP.CD"),
 }
 
 
@@ -1089,8 +1102,8 @@ def annual_export(map_rows):
         rec = {}
         for k in YEAR_KEYS:
             s_ = H.get(k)
-            if s_ is None or not len(s_):
-                continue
+            if s_ is None or not len(s_) or (k in R.WB_FALLBACK and s_ is H.get(R.WB_FALLBACK[k])):
+                continue                     # year table rows carry one source each; stand-ins show in the readout
             s_ = s_[s_.index.year >= 1980]
             if not len(s_):
                 continue
@@ -1106,17 +1119,46 @@ def annual_export(map_rows):
             "rel": {k: v for k, v in S.REL.items() if k == "weo" or k.startswith("wb:")}}
 
 
-def headline(prices, ports):
+BAND_WORDS = {"Strong": "strong", "Steady": "steady", "Soft": "soft", "Stressed": "under stress"}
+PILLAR_WORD = {"activity": "output", "labor": "jobs", "prices": "prices", "trade": "trade"}
+
+
+# Codes outside ISO 3166 that the IMF and World Bank publish: map key (matched by name on the map) and display name
+EXTRA_ISO = {"XKX": ("XKX", "Kosovo")}
+
+
+def cty(iso3):
+    """(map key, name) for an ISO3 code: ISO numeric for standard countries, the code itself for Kosovo."""
+    if iso3 in EXTRA_ISO:
+        return EXTRA_ISO[iso3]
+    import pycountry
+    c = pycountry.countries.get(alpha_3=iso3)
+    return (int(c.numeric), c.name) if c else None
+
+
+def headline(world, econ, prices, ports):
+    """Leads with the score band, so the words always match the number; then the main driver:
+    the pillar furthest from normal on average across scored economies, or the trade/energy shock when it fires."""
+    if world is None:
+        return "Global economy: score pending."
+    lab = label(world)
+    out = f"Global economy {BAND_WORDS.get(lab, lab.lower())} ({world:.0f})."
     vol = ports["global"].get("total") if ports else None
     oil = next((p["yoy"] for p in prices if p["name"] == "Brent crude"), None)
-    if vol is not None and oil is not None:
-        if vol < -2 and oil > 15:
-            return "Supply shock: goods are moving less while prices rise."
-        if vol > 2 and oil < 0:
-            return "Expansion with easing costs: more trade, cheaper energy."
-    if vol is not None:
-        return "Global trade is slowing." if vol < -2 else "Global trade is growing." if vol > 2 else "Global trade is flat."
-    return "Global economy: mixed signals."
+    if vol is not None and oil is not None and vol < -2 and oil > 15:
+        return out + " Main driver: a supply shock, with goods moving less while oil prices rise."
+    zs = {}
+    for e in econ.values():
+        if e.get("score") is None:
+            continue
+        for k, v in (e.get("pillars") or {}).items():
+            if v is not None:
+                zs.setdefault(k, []).append(v)
+    if zs:
+        k, m = max(((k, float(np.mean(v))) for k, v in zs.items()), key=lambda x: abs(x[1]))
+        if abs(m) >= 0.1:
+            return out + f" Main {'drag' if m < 0 else 'support'}: {PILLAR_WORD.get(k, k)}."
+    return out
 
 
 def save_history(scores):
@@ -1152,7 +1194,7 @@ def write_packs(rb, hist, days, data):
             "fx": R.FX, "fx_names": R.FX_NAMES, "fx_units": R.FX_UNITS, "fx_base_foreign": sorted(R.FX_BASE_IS_FOREIGN),
             "fx_note": data["markets"].get("fx_note"), "commodities": R.COMMODITIES,
             "chokepoints": R.CHOKEPOINTS, "regions": R.REGIONS, "products": R.PRODUCTS, "vital_keys": R.VITAL_KEYS,
-            "weo": {k: [v[1], v[2]] for k, v in R.WEO.items()}, "wb": {k: [v[0], v[1], v[2]] for k, v in R.WB.items()},
+            "weo": {k: [v[1], v[2]] for k, v in R.WEO.items()}, "wb": {k: [v[0], v[1], v[2]] for k, v in R.WB.items()}, "wb_fallback": R.WB_FALLBACK,
             "annual_kind": ANNUAL_KIND, "ind_kind": IND_KIND, "math_kind": MATH_KIND,
             "year_keys": {k: list(v) for k, v in YEAR_KEYS.items()}, "status": S.STATUS}
     PK.write_packs(RAW, meta, scores, PACKS)
@@ -1179,7 +1221,7 @@ def main():
     for k, e in econ.items():
         f = annual.get(k, {})
         e["vitals"] = {x: f[x] for x in R.VITAL_KEYS if x in f}
-        e["fundamentals"] = {x: v for x, v in f.items() if x not in R.VITAL_KEYS}
+        e["fundamentals"] = {x: v for x, v in f.items() if x not in R.VITAL_KEYS and not (x.endswith("_wb") and x != "debt_wb")}
         e["math"] = macro_math(e)
         e["derived"] = derive(e, e["fundamentals"])
         SERIES_OUT[k] = history_series(e)
@@ -1228,14 +1270,14 @@ def main():
     RAW["iso"] = {}
     for iso3 in set(annual) | set(econ) | set((ports or {}).get("economies", {})) | set(power) | set(RAW.get("ember", {})) \
             | set((RAW.get("ports") or {}).get("eco", {})):
-        c = pycountry.countries.get(alpha_3=iso3)
+        c = cty(iso3)
         if c:
-            RAW["iso"][iso3] = [int(c.numeric), c.name]
+            RAW["iso"][iso3] = list(c)
     for iso3 in set(annual) | set(econ) | set((ports or {}).get("economies", {})) | set(power):
-        c = pycountry.countries.get(alpha_3=iso3)
+        c = cty(iso3)
         if not c:
             continue
-        f, row = annual.get(iso3, {}), {"iso3": iso3, "name": c.name}
+        f, row = annual.get(iso3, {}), {"iso3": iso3, "name": c[1]}
         for k in ("gdp_growth", "inflation_a", "unemployment_a", "gov_debt", "current_account", "gdp_usd", "population", "net_exports"):
             if k in f:
                 row[k] = f[k]["value"]
@@ -1274,7 +1316,15 @@ def main():
         if ports and iso3 in ports.get("pc", {}).get("economies", {}):
             cc["trade"] = ports["pc"]["economies"][iso3]
         row["c"] = cc
-        map_rows[str(int(c.numeric))] = row
+        map_rows[str(c[0])] = row
+
+    # Development & environment (slow annual indicators for every country)
+    try:
+        import dev as DV
+        dev_out = DV.build({r["iso3"]: r["name"] for r in map_rows.values()})
+    except Exception as ex:
+        S.log("dev", False, ex)
+        dev_out = None
 
     # Score history (all scored countries + world): rebuilt with today's method for every past day, then the
     # archive of what the site showed (from the first archived day on), then today -> score changes
@@ -1335,7 +1385,7 @@ def main():
     data = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "weo_release": weo_rel,
-        "world": {"score": world, "label": label(world), "headline": headline(prices, ports), "breakdown": world_breakdown,
+        "world": {"score": world, "label": label(world), "headline": headline(world, econ, prices, ports), "breakdown": world_breakdown,
                   "trade_yoy": ports["global"].get("total") if ports else None,
                   "countries": len(map_rows), "tracked": len(econ),
                   "scored": sum(1 for r in map_rows.values() if r.get("score") is not None), "chg": world_chg},
@@ -1363,6 +1413,8 @@ def main():
     annual_text = json.dumps(clean(annual_export(map_rows)), separators=(",", ":"))
     (OUT.parent / "series.json").write_text(series_text)
     (OUT.parent / "annual.json").write_text(annual_text)
+    if dev_out:
+        (OUT.parent / "dev.json").write_text(json.dumps(clean(dev_out), separators=(",", ":")))
     day = TODAY.strftime("%Y-%m-%d")
     try:
         # the score line in series.json changes every day and is already in the heartbeat: keep it out of the

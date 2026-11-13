@@ -112,3 +112,9 @@ td .chg{font-size:10px}
 .foot .lic{color:#6c717a;font-size:10px}.foot .lic a,.srcs a{color:var(--ink2)}
 .srcs{padding-left:18px;margin:8px 0}.srcs li{margin:4px 0}
 .fnotice{letter-spacing:.02em;text-transform:none;font-size:10px;color:var(--mute);margin:10px 0 0;max-width:900px;line-height:1.5}
+.devsel{flex-wrap:wrap;gap:6px}
+.devsel button{white-space:nowrap}
+#devtbl tr.click{cursor:pointer}
+#devtbl tr.click:hover td{background:rgba(255,255,255,.03)}
+#devtbl td:first-child{width:2.5em}
+#devtbl td:nth-child(2),#devtbl th:nth-child(2){text-align:left}

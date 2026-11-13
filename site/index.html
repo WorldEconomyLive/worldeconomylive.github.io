@@ -15,7 +15,7 @@
 <header class="bar">
   <div class="brand"><span class="dot"></span>WORLD ECONOMY <b>LIVE</b></div>
   <nav>
-    <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Debt</a><a href="#years">Years</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#method">Method</a>
+    <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Debt</a><a href="#years">Years</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#development">Development</a><a href="#method">Method</a>
   </nav>
   <button class="navbtn mono" id="navbtn" type="button" aria-expanded="false" aria-label="Sections">Sections ▾</button>
   <div class="upd mono" id="upd">—</div>
@@ -33,7 +33,7 @@
     <p class="mono small" id="breakdown"></p>
   </div>
   <div class="layers" id="layers">
-    <button data-l="score" class="on">Score</button><button data-l="gdp">Growth</button><button data-l="inflation">Inflation</button><button data-l="unemployment">Jobless</button><button data-l="debt">Debt</button><button data-l="ca">Current acct</button><button data-l="tb">Trade bal.</button><button data-l="power">Power</button><button data-l="trade">Port trade</button>
+    <button data-l="score" class="on">Score</button><button data-l="gdp">Growth</button><button data-l="inflation">Inflation</button><button data-l="unemployment">Jobless</button><button data-l="debt">Debt</button><button data-l="ca">Current acct</button><button data-l="tb">Trade bal.</button><button data-l="power">Power</button><button data-l="trade">Port trade</button><button data-l="poverty">Poverty</button><button data-l="dev" id="devlayer">Development</button>
   </div>
   <div class="legend mono" id="legend"></div>
   <div class="tip mono" id="tip"></div>
@@ -160,10 +160,20 @@
     <div id="f-vitals"></div>
   </section>
 
+  <section id="development">
+    <h2><span>11</span>Development and environment</h2>
+    <p class="sub">How countries compare on living standards, health, work, research and emissions. Pick an indicator: the table ranks every country by its latest published year, beside its value about 10 years earlier. Tap a country for its full readout, or color the map with it.</p>
+    <div class="filters devsel" id="devsel"></div>
+    <div class="filters"><input id="dq" placeholder="Search country" autocomplete="off"><button id="devmap" type="button">Show on map</button></div>
+    <p class="plain" id="devabout"></p>
+    <div class="tbl" id="devtbl"></div>
+    <div id="f-dev"></div>
+  </section>
+
   <section id="method">
-    <h2><span>11</span>Method</h2>
+    <h2><span>12</span>Method</h2>
     <details open><summary>The score</summary>
-      <p>Up to four pillars per economy: <b>output</b> (factory output growth, or GDP growth, blended with electricity demand), <b>jobs</b> (12-month change in unemployment, inverted), <b>prices</b> (distance of inflation from 2%, inverted) and <b>trade</b> (port cargo vs a year ago). Each is compared with that country's own last 10 years using the median and median absolute deviation, leaving out the pandemic distortion (March 2020 to December 2021). An economy needs at least two pillars to be scored. Countries without monthly data are scored the same way from IMF World Economic Outlook estimates for the current year (growth, inflation, change in unemployment) against their own past 15 years, plus port cargo and electricity where available; their map tooltip says so.</p>
+      <p>Up to four pillars per economy: <b>output</b> (factory output growth, or GDP growth, blended with electricity demand), <b>jobs</b> (12-month change in unemployment, inverted), <b>prices</b> (distance of inflation from 2%, inverted) and <b>trade</b> (port cargo vs a year ago). Each is compared with that country's own last 10 years using the median and median absolute deviation, leaving out the pandemic distortion (March 2020 to December 2021). An economy needs at least two pillars to be scored. Countries without monthly data are scored the same way from annual figures for <b>completed calendar years only</b> (growth, inflation, change in unemployment) against their own past 15 years, plus port cargo and electricity where available; the current year's IMF forecast is never scored, and the latest completed year must be no more than 2 years old. The figures come from the IMF World Economic Outlook, or from the World Bank where the IMF publishes no series for that country; their map tooltip says so. The headline names the score band first (strong 60+, steady 45–60, soft 35–45, under stress below 35) and then the pillar furthest from normal on average across scored economies, so the words always match the number.</p>
       <p>The <b>world score</b> is 80% the GDP-weighted average of economy scores and 20% <b>global stress</b>: oil and gas price shocks against their own 15-year history, and world port cargo vs a year ago.</p>
       <p class="mono small">60+ STRONG · 45–60 STEADY · 35–45 SOFT · &lt;35 STRESSED</p>
     </details>
@@ -185,14 +195,17 @@
       <p class="small">Every panel's note names its source and carries the credit line that source's terms ask for. All figures are free public data, shown with credit, with the site's own calculations (changes, windows, ratios, scores) stated as such; no source endorses this site or is responsible for these calculations. Port data lags, so the latest 10 days are excluded.</p>
       <ul class="small srcs">
         <li><b>OECD</b> Data Explorer: inflation, unemployment, factory output, GDP, bond yields, merchandise trade. Cited as OECD (year), dataset name, OECD Data Explorer.</li>
-        <li><b>International Monetary Fund</b>: World Economic Outlook database (IMF DataMapper; DBnomics mirror as a fallback) and PortWatch (port and chokepoint activity from satellite ship tracking, UN Global Platform). Use is subject to the <a href="https://www.imf.org/en/about/copyright-and-terms" target="_blank" rel="noopener">IMF's copyright and usage terms</a>; anyone reusing IMF figures from this site should follow them too.</li>
+        <li><b>International Monetary Fund</b>: World Economic Outlook database (IMF DataMapper, then the IMF data portal; when both are unreachable, the DBnomics mirror, flagged as an older copy wherever it is cited) and PortWatch (port and chokepoint activity from satellite ship tracking, UN Global Platform). Use is subject to the <a href="https://www.imf.org/en/about/copyright-and-terms" target="_blank" rel="noopener">IMF's copyright and usage terms</a>; anyone reusing IMF figures from this site should follow them too.</li>
         <li><b>World Bank</b>: World Development Indicators and Commodity Price Data (The Pink Sheet), CC BY 4.0. No endorsement by the World Bank is implied.</li>
         <li><b>Bank for International Settlements</b>: central bank policy rates, compiled from national central banks. The BIS does not guarantee their accuracy or completeness.</li>
         <li><b>Eurostat</b>: euro-area fallbacks, air and rail freight. Eurostat bears no responsibility for this reuse.</li>
         <li><b>European Central Bank</b>: euro foreign exchange reference rates (Source: ECB statistics), converted by this site into US-dollar pairs.</li>
         <li><b>Federal Reserve Bank of New York</b>: effective federal funds rate. The Effective Federal Funds Rate is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the Effective Federal Funds Rate by World Economy Live, does not sanction or endorse any particular republication, and has no liability for your use.</li>
         <li><b>U.S. Department of the Treasury</b> (daily yield curves; Fiscal Data: Debt to the Penny, Monthly Treasury Statement) and <b>U.S. Bureau of Transportation Statistics</b>: U.S. government works, public domain.</li>
-        <li><b>Ember</b>: monthly electricity data, CC BY 4.0.</li>
+        <li><b>Ember</b>: monthly electricity data, CC BY 4.0 (electricity demand; low-carbon share of generation by year).</li>
+        <li><b>Our World in Data</b> (its processing CC BY 4.0; each series keeps its original licence): Maddison Project Database 2023 (Bolt and van Zanden, CC BY 4.0), Penn World Table 11.0 (Feenstra, Inklaar and Timmer, CC BY 4.0), UNDP Human Development Report (CC BY 3.0 IGO), Global Carbon Project, Global Carbon Budget (CC BY 4.0), and Jones et al., National contributions to climate change (CC BY 4.0).</li>
+        <li><b>Figures the World Bank republishes</b> in World Development Indicators: FAO (undernourishment, CC BY 4.0), ILO modelled estimates (labour force, CC BY 4.0), UN IGME (child mortality), World Bank Poverty and Inequality Platform, and UNESCO Institute for Statistics (R&amp;D spending, CC BY-SA 3.0 IGO; this site's changes to it are limited to selecting the latest year and the year about 10 years earlier).</li>
+        <li><b>Not used</b>, because their terms do not allow open reuse or state no licence: Energy Institute Statistical Review of World Energy, WHO-led series, IEA, and the World Inequality Database.</li>
         <li><b>Statistics Canada</b>: adapted from Statistics Canada, Table 23-10-0216-01, Railway carloadings. This does not constitute an endorsement by Statistics Canada of this product.</li>
       </ul>
       <div class="status" id="status"></div>

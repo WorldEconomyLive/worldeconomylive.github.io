@@ -98,6 +98,8 @@
     'DSD_STES@DF_INDSERV': 'Production and sales (industry)', 'DSD_NAMAIN1@DF_QNA': 'Quarterly national accounts', 'DSD_STES@DF_FINMARK': 'Financial market statistics',
     'DSD_IMTS@DF_IMTS': 'International merchandise trade statistics' };
   function notice(k, hi) {
+    const dk = DORDER.find((x) => DV?.keys?.[x]?.rel === k);
+    if (dk) return ['dev:' + dk, `${esc(DV.keys[dk].label)}: ${esc(DV.keys[dk].credit)} Latest year and changes selected and computed by this site.`];
     const yr = String(LIVE?.asof?.today || LIVE?.generated_at || '').slice(0, 4), imf = `IMF terms: ${lnk('www.imf.org/en/about/copyright-and-terms')}`;
     if (k.startsWith('oecd:')) { const id = k.slice(5); return ['oecd', `${esc(OECD_DS[id] || id)} (${esc(id)})`, yr]; }
     if (k === 'weo') return ['weo', `Source: International Monetary Fund, World Economic Outlook database${(D.rel?.weo?.label || LIVE?.rel?.weo?.label) ? ' (' + esc(D.rel?.weo?.label || LIVE.rel.weo.label) + ')' : ''}, ${lnk('data.imf.org')}. Changes and scores computed by this site. ${imf}.`];
@@ -181,6 +183,9 @@
   $('gen').textContent = 'LAST UPDATE ' + (D.generated_at || '');
   if ($('fnotice')) $('fnotice').textContent = NYFED;
   dispatchEvent(new Event('resize'));       // the header just changed width: re-check whether the section links fit
+  // map features carry ISO numeric ids; Kosovo has none in the map file, so it is matched by name
+  const NAMEKEY = { Kosovo: 'XKX' };
+  const fid = (d) => (d.id != null ? String(+d.id) : NAMEKEY[d.properties?.name] || '');
   const mapName = (iso) => Object.values(D.map || {}).find((r) => r.iso3 === iso)?.name || iso;
 
   // ---------------- map ----------------
@@ -195,9 +200,79 @@
     // these two layers are themselves changes, so they follow the period toggle
     power: { get: (r) => r.power, c: 'power', color: (v) => div(v, 8), legend: ['−8%', '0', '+8% power use'], ramp: [div(-8, 8), div(0, 8), div(8, 8)] },
     trade: { get: (r) => r.trade, c: 'trade', color: (v) => div(v, 30), legend: ['−30%', '0', '+30%'], ramp: [div(-30, 30), div(0, 30), div(30, 30)] },
+    // development layers: latest published year per country (data/dev.json)
+    poverty: { get: (r) => devPt(r.iso3, 'poverty')?.v, dev: 'poverty', color: (v) => seq(v, 0, 40, NEG), legend: ['0%', '', '40%+ in extreme poverty'], ramp: [seq(0, 0, 40, NEG), seq(40, 0, 40, NEG)] },
+    dev: { get: (r) => devPt(r.iso3, DKEY)?.v, dev: true, color: (v) => devColor(v), legend: () => devLegend(), get ramp() { return devRamp(); } },
   };
+  // ---------------- development & environment (slow annual indicators) ----------------
+  let DV = null, DKEY = 'rd', DSC = null;
+  const DORDER = ['rd', 'poverty', 'gdp_pc_long', 'productivity', 'hdi', 'child_mort', 'school', 'undernourish', 'labor_part', 'female_lab', 'co2_pc', 'clean_elec', 'warming'];
+  async function loadDev() {
+    if (DV) return DV;
+    try { const r = await fetch('data/dev.json', { cache: 'no-cache' }); DV = r.ok ? await r.json() : null; } catch (e) { DV = null; }
+    DV = DV || { keys: {}, data: {}, names: {}, rel: {} };
+    return DV;
+  }
+  // past dates: an annual figure for year Y counts as published on July 1 of Y+1
+  const devCut = () => { if (D === LIVE) return 9999; const v = String(D.asof_view || D.asof?.today || ''); const y = +v.slice(0, 4); return v.slice(5, 10) >= '07-01' ? y - 1 : y - 2; };
+  const devPt = (iso, k, upto) => {
+    const a = DV?.data?.[iso]?.[k]; if (!a) return null;
+    const cut = Math.min(upto ?? 9999, devCut());
+    for (let j = Math.min(a[1].length - 1, cut - a[0]); j >= 0; j--) if (ok(a[1][j])) return { v: a[1][j], y: a[0] + j };
+    return null;
+  };
+  const devAgo = (iso, k, x) => { const a = x && devPt(iso, k, x.y - 10); return a && a.y >= x.y - 12 ? a : null; };
+  const devFmt = (k, v) => { const K = DV?.keys?.[k]; if (!K || !ok(v)) return '—'; if (K.unit.startsWith('int.-$')) return '$' + big(v); return num(v, K.dec) + (K.unit.startsWith('%') ? '%' : ''); };
+  const devSrcName = (K) => (K.src === 'owid' ? 'Our World in Data' : K.src === 'ember' ? 'Ember' : 'World Bank');
+  const devDelta = (k, x, a) => {
+    if (!a) return '';
+    const K = DV.keys[k], d = x.v - a.v, g = K.better || 0;
+    const t = K.unit.startsWith('int.-$') || k === 'co2_pc' || k === 'warming' ? (a.v ? sg((x.v / a.v - 1) * 100, 0) : '—') : sg(d, K.dec, K.unit.startsWith('%') ? ' pp' : '');
+    return `<span class="chg ${g ? cls(d, g > 0) : ''}">${t}</span>`;
+  };
+  function devScale() {
+    const vals = Object.keys(DV?.data || {}).map((i) => devPt(i, DKEY)?.v).filter(ok).sort((a, b) => a - b);
+    const q = (p) => vals[Math.min(vals.length - 1, Math.max(0, Math.round(p * (vals.length - 1))))];
+    DSC = vals.length ? { lo: q(0.05), hi: q(0.95), k: DKEY } : null;
+    return DSC;
+  }
+  const devColor = (v) => { const S_ = DSC?.k === DKEY ? DSC : devScale(); if (!S_ || !ok(v)) return '#111317'; const g = DV.keys[DKEY]?.better ?? 1; return seq(v, S_.lo, S_.hi, g < 0 ? NEG : POS); };
+  const devLegend = () => { const S_ = DSC?.k === DKEY ? DSC : devScale(), K = DV?.keys?.[DKEY]; return S_ && K ? [devFmt(DKEY, S_.lo), '', `${devFmt(DKEY, S_.hi)} ${K.label.toLowerCase()}`] : ['', '', '']; };
+  const devRamp = () => { const S_ = DSC?.k === DKEY ? DSC : devScale(); if (!S_) return ['#111317', '#111317']; return [devColor(S_.lo), devColor(S_.hi)]; };
+  function devFacts(iso, F) {
+    if (!DV) return '';
+    return DORDER.filter((k) => DV.keys[k]).map((k) => {
+      const K = DV.keys[k], x = devPt(iso, k);
+      if (!x) return '';
+      const a = devAgo(iso, k, x);
+      F.rel(K.rel, `${x.y}-07-01`, 'A', K.label, devSrcName(K), true);
+      return fact(K.label, devFmt(k, x.v), `${esc(K.unit.toUpperCase())} · ${x.y}${a ? ` · ${a.y}: ${devFmt(k, a.v)}` : ''}`, devDelta(k, x, a));
+    }).join('');
+  }
+  function renderDev() {
+    if (!DV || !D || !$('devtbl')) return;
+    D.rel = Object.assign({}, DV.rel || {}, D.rel || {});
+    const keys = DORDER.filter((k) => DV.keys[k]);
+    if (!keys.includes(DKEY)) DKEY = keys[0];
+    $('devsel').innerHTML = keys.map((k) => `<button data-d="${k}" class="${k === DKEY ? 'on' : ''}">${esc(DV.keys[k].label)}</button>`).join('');
+    $('devsel').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { DKEY = b.dataset.d; DSC = null; renderDev(); if (layer === 'dev') paint(); }));
+    const K = DV.keys[DKEY], qq = ($('dq').value || '').trim().toLowerCase(), F = foot();
+    $('devabout').textContent = `${K.label} (${K.unit}). ${K.better > 0 ? 'Higher is better.' : K.better < 0 ? 'Lower is better.' : ''}`;
+    const rows = Object.keys(DV.data).map((i) => { const x = devPt(i, DKEY); return x ? { i, x, a: devAgo(i, DKEY, x) } : null; }).filter(Boolean)
+      .filter((r) => !qq || (DV.names[r.i] || '').toLowerCase().includes(qq)).sort((a, b) => b.x.v - a.x.v);
+    rows.forEach((r) => F.rel(K.rel, `${r.x.y}-07-01`, 'A', K.label, devSrcName(K), true));
+    const trend = (i) => { const a = DV.data[i][DKEY], c = devCut(), p = []; a[1].forEach((v, j) => { if (ok(v) && a[0] + j <= c) p.push([a[0] + j, v]); }); return spark(p, 110, 22); };
+    $('devtbl').innerHTML = rows.length ? table(['#', 'Country', K.label, 'Year', 'About 10 years earlier', 'Change', 'Trend'], rows.map((r, n) =>
+      `<tr class="click" data-iso="${r.i}"><td class="na">${n + 1}</td><td>${esc(DV.names[r.i] || r.i)}</td><td>${devFmt(DKEY, r.x.v)}</td><td>${r.x.y}</td><td>${r.a ? `${devFmt(DKEY, r.a.v)} <span class="na">(${r.a.y})</span>` : '<span class="na">—</span>'}</td><td>${devDelta(DKEY, r.x, r.a) || '<span class="na">n/a</span>'}</td><td>${trend(r.i)}</td></tr>`))
+      : `<p class="sub na" style="padding:14px">n/a — no figures published for this indicator ${D === LIVE ? 'yet' : 'on or before ' + mdy(D.asof_view || D.asof?.today)}.</p>`;
+    $('devtbl').querySelectorAll('tr[data-iso]').forEach((tr) => tr.addEventListener('click', () => openCountry(tr.dataset.iso)));
+    $('f-dev').innerHTML = F.html() + `<div class="foot"><p class="fn">Change: percentage points for shares and rates; percent for income, productivity and emissions. ${D === LIVE ? '' : 'For past dates, a figure for year Y counts as published on July 1 of Y+1. '}Ranked by the latest year each country has; years differ between countries.</p></div>`;
+  }
+  $('dq')?.addEventListener('input', () => renderDev());
+  $('devmap')?.addEventListener('click', () => { layer = 'dev'; document.querySelectorAll('#layers button').forEach((b) => b.classList.toggle('on', b.dataset.l === 'dev')); DSC = null; paint(); $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  loadDev().then(() => { if (!D) return; renderDev(); if (LAYERS[layer]?.dev) paint(); try { if (openIdx !== null) showDetail(openIdx); } catch (e) { /* economies not set up yet */ } });
   const viewYear = () => +String(D.asof_view || D.asof?.today || new Date().toISOString()).slice(0, 4);
-  const LAYER_SRC = { score: 'Score', gdp: 'GDP growth', inflation: 'Inflation', unemployment: 'Unemployment', debt: 'Government debt', ca: 'Current account', tb: 'Trade balance', power: 'Electricity demand', trade: 'Port cargo' };
+  const LAYER_SRC = { score: 'Score', gdp: 'GDP growth', inflation: 'Inflation', unemployment: 'Unemployment', debt: 'Government debt', ca: 'Current account', tb: 'Trade balance', power: 'Electricity demand', trade: 'Port cargo', poverty: 'Extreme poverty', get dev() { return DV?.keys?.[DKEY]?.label || 'Development'; } };
   let layer = 'score', paths, cpG, proj, drawCP = () => {};
   const tip = $('tip');
   // tooltip next to the cursor, flipped above or to the left when it would run off the map
@@ -210,6 +285,13 @@
   const hideTip = () => { tip.style.opacity = 0; };
   function mapFoot() {
     const L = LAYERS[layer], F = foot();
+    if (L.dev) {
+      const k = L.dev === true ? DKEY : L.dev, K = DV?.keys?.[k];
+      if (K) for (const r of Object.values(D.map || {})) { const x = devPt(r.iso3, k); if (x) F.rel(K.rel, `${x.y}-07-01`, 'A', K.label, devSrcName(K)); }
+      D.rel = Object.assign({}, DV?.rel || {}, D.rel || {});
+      $('f-map').innerHTML = `<p class="fl">MAP COLORS · ${esc(LAYER_SRC[layer].toUpperCase())} (LATEST PUBLISHED YEAR PER COUNTRY; YEARS DIFFER)</p>` + F.html();
+      return;
+    }
     for (const r of Object.values(D.map || {})) {
       const o = r.c?.[L.c]; if (!o) continue;
       F.add(r.name, o);
@@ -232,8 +314,9 @@
     $('f-map').innerHTML = `<p class="fl">MAP COLORS · ${esc(LAYER_SRC[layer].toUpperCase())} (CURRENT VALUES) · TOOLTIP CHANGES OVER ${PERS[PI]}</p>` + F.html();
   }
   function paint() {
+    if (LAYERS[layer].dev && !DV) { loadDev().then(paint); return; }
     const L = LAYERS[layer], lg = typeof L.legend === 'function' ? L.legend() : L.legend;
-    if (paths) paths.attr('fill', (d) => { const r = D.map?.[String(+d.id)]; return r ? L.color(L.get(r)) : '#0d0f12'; });
+    if (paths) paths.attr('fill', (d) => { const r = D.map?.[fid(d)]; return r ? L.color(L.get(r)) : '#0d0f12'; });
     $('legend').innerHTML = `<span>${lg[0]}</span><span class="ramp" style="background:linear-gradient(90deg,${L.ramp.join(',')})"></span><span>${lg[2]}</span>${layer === 'power' || layer === 'trade' ? '<span class="na">· vs a year ago</span>' : ''}`;
     document.querySelectorAll('#layers button').forEach((b) => b.classList.toggle('on', b.dataset.l === layer));
     mapFoot();
@@ -252,7 +335,7 @@
     paths = svg.insert('g', '.hl').selectAll('path').data(feats).join('path').attr('class', 'country').attr('d', path)
       .on('mouseenter', (ev, d) => hl.attr('d', path(d)).style('opacity', 1))
       .on('mousemove', (ev, d) => {
-        const r = D.map?.[String(+d.id)], c = r?.c || {};
+        const r = D.map?.[fid(d)], c = r?.c || {};
         let h = `<b>${esc(r?.name || d.properties.name)}</b>${r ? `<span class="tc"> · change over ${PERS[PI]}</span>` : ''}`;
         if (r) {
           if (ok(r.score)) h += tipLine('Score', `${num(r.score, 0)} · ${esc(r.label)}`, c.score);
@@ -265,14 +348,16 @@
           if (ok(r.gdp_usd)) h += tipLine('GDP', usd(r.gdp_usd), c.gdp_usd);
           if (c.trade) h += `<br>Port cargo <span class="tc">${ctext(c.trade) ?? 'n/a'}</span>`;
           if (c.power) h += `<br>Power use <span class="tc">${ctext(c.power) ?? 'n/a'}</span>`;
-          if (!r.tracked) h += `<br><span style="color:#5f646d">${r.basis === 'annual' ? 'score from IMF annual estimates' + (c.trade || c.power ? ' + live port/power data' : '') : 'annual data (IMF/World Bank)'}</span>`;
+          const L_ = LAYERS[layer];
+          if (L_.dev) { const k = L_.dev === true ? DKEY : L_.dev, x = devPt(r.iso3, k); h += `<br><b>${esc(DV?.keys?.[k]?.label || '')}</b> ${x ? devFmt(k, x.v) + ` <span class="tc">${x.y}</span>` : '<span class="tc">not published</span>'}`; }
+          if (!r.tracked) h += `<br><span style="color:#5f646d">${r.basis === 'annual' ? 'score from completed-year annual data' + (c.trade || c.power ? ' + live port/power data' : '') : 'annual data (IMF/World Bank)'}</span>`;
           if (!ok(r.score)) h += `<br><span style="color:#5f646d">no score · tap for the data the site has</span>`;
         } else h += '<br><span style="color:#5f646d">No data available</span>';
         showTip(ev, h);
       })
       .on('mouseleave', () => { hideTip(); hl.style('opacity', 0); })
-      .on('click', (ev, d) => { const r = D.map?.[String(+d.id)]; if (r) openCountry(r.iso3); });
-    paths.style('cursor', (d) => (D.map?.[String(+d.id)] ? 'pointer' : 'default'));
+      .on('click', (ev, d) => { const r = D.map?.[fid(d)]; if (r) openCountry(r.iso3); });
+    paths.style('cursor', (d) => (D.map?.[fid(d)] ? 'pointer' : 'default'));
     cpG = svg.append('g');
     drawCP = () => { cpG.selectAll('*').remove(); drawChokepoints(); };
     drawChokepoints();
@@ -364,7 +449,7 @@
       <p class="plain">${esc(plain(e)) || 'Detailed data fills in after the first automated run.'}</p>
       ${e.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(e.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25, sg(v, 0, ''))}</div>`).join('')}</div>` : ''}
       ${live ? `<h3>Live indicators</h3><ul class="facts">${live}</ul>` : ''}${mth ? `<h3>Formulas</h3><ul class="facts">${mth}</ul>` : ''}
-      ${gov ? `<h3>Government and trade</h3><ul class="facts">${gov}</ul>` : ''}${vit ? `<h3>People and health</h3><ul class="facts">${vit}</ul>` : ''}${F.html()}
+      ${gov ? `<h3>Government and trade</h3><ul class="facts">${gov}</ul>` : ''}${vit ? `<h3>People and health</h3><ul class="facts">${vit}</ul>` : ''}${(() => { const dv = devFacts(e.iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${F.html()}
       <div class="dyr"><h3>Year by year</h3><select id="dysel" aria-label="Calendar year"></select></div><ul class="facts" id="dyfacts"></ul><div id="dyfoot"></div></div>`;
     detailYear(e.iso3);
   }
@@ -377,17 +462,17 @@
   const NA = '<span class="na">n/a</span>';
   async function showCountry(iso3) {
     openIdx = null; document.querySelectorAll('.eco').forEach((b) => b.classList.remove('on'));
-    await loadAnnual();
+    await loadAnnual(); await loadDev();
     const r = Object.values(D.map || {}).find((x) => x.iso3 === iso3) || { iso3, name: iso3, c: {} }, c = r.c || {}, F = foot();
-    const A = AN?.data?.[iso3] || {}, vy = viewYear();
-    const latest = (k) => { const a = A[k]; if (!a) return null; for (let j = a[1].length - 1; j >= 0; j--) if (ok(a[1][j]) && a[0] + j <= vy) return { v: a[1][j], y: a[0] + j, k }; return null; };
-    const series = (k) => { const a = A[k]; if (!a || !window.WELEngine) return null; const t_ = [], v_ = []; a[1].forEach((x, j) => { if (ok(x) && a[0] + j <= vy) { t_.push(window.WELEngine.dn(a[0] + j, 7, 1)); v_.push(x); } }); return t_.length ? { t: t_, v: v_ } : null; };
-    const achg = (k) => { const s = series(k); return s ? A1(window.WELEngine.change(s, AN.keys[k]?.kind || 'pp', 'A')) : null; };
-    const src = (k) => (AN.keys[k]?.rel === 'weo' ? 'IMF WEO' : 'WORLD BANK');
+    const A = AN?.data?.[iso3] || {}, vy = viewYear(), kk = (k) => AK(iso3, k);
+    const latest = (k) => { k = kk(k); const a = A[k]; if (!a) return null; for (let j = a[1].length - 1; j >= 0; j--) if (ok(a[1][j]) && a[0] + j <= vy) return { v: a[1][j], y: a[0] + j, k }; return null; };
+    const series = (k) => { k = kk(k); const a = A[k]; if (!a || !window.WELEngine) return null; const t_ = [], v_ = []; a[1].forEach((x, j) => { if (ok(x) && a[0] + j <= vy) { t_.push(window.WELEngine.dn(a[0] + j, 7, 1)); v_.push(x); } }); return t_.length ? { t: t_, v: v_ } : null; };
+    const achg = (k) => { const s = series(k); k = kk(k); return s ? A1(window.WELEngine.change(s, AN.keys[k]?.kind || 'pp', 'A')) : null; };
+    const src = (k) => (AN.keys[kk(k)]?.rel === 'weo' ? 'IMF WEO' : 'WORLD BANK');
     const item = (lab, k, f, good = 0) => {
       const x = latest(k);
       if (!x) return fact(lab, NA, 'NOT PUBLISHED FOR THIS COUNTRY');
-      const o = achg(k); F.add(`${lab.toLowerCase()}`, o); F.rel(AN.keys[k]?.rel, `${x.y}-07-01`, 'A', lab, AN.keys[k]?.rel === 'weo' ? 'IMF World Economic Outlook' : 'World Bank');
+      const o = achg(k); k = kk(k); F.add(`${lab.toLowerCase()}`, o); F.rel(AN.keys[k]?.rel, `${x.y}-07-01`, 'A', lab, AN.keys[k]?.rel === 'weo' ? 'IMF World Economic Outlook' : 'World Bank');
       const est = AN.keys[k]?.rel === 'weo' && x.y >= AN.estimate_from;
       return fact(lab, f(x.v), `${x.y}${est ? ' EST' : ''} · ${src(k)}`, chg(o, good));
     };
@@ -412,14 +497,14 @@
     if (ok(r.score)) {
       F.add('Score', c.score); F.rel('site', D.generated_at, 'D', 'Score (computed by this site)', 'World Economy Live');
       top = `<div class="score" style="font-size:56px">${Math.round(r.score)}<small>/100</small></div><div class="cc big">${chg(c.score, 1) || ''} <span class="na mono small">over ${PERS[PI]}</span></div>
-        <span class="pill ${esc(r.label)}">${esc(r.label)}</span><span class="mono small" style="margin-left:10px">SCORED FROM IMF ANNUAL ESTIMATES${c.trade || c.power ? ' + LIVE PORT/POWER DATA' : ''}</span>
+        <span class="pill ${esc(r.label)}">${esc(r.label)}</span><span class="mono small" style="margin-left:10px">SCORED FROM COMPLETED-YEAR ANNUAL DATA (IMF WEO; WORLD BANK WHERE IMF HAS NONE)${c.trade || c.power ? ' + LIVE PORT/POWER DATA' : ''}</span>
         ${r.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(r.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25, sg(v, 0, ''))}</div>`).join('')}</div>` : ''}`;
     } else {
       top = `<p class="plain"><b>Not scored:</b> fewer than two pillars available (${PN.join(', ')}). ${have.length ? `Available: ${esc(have.join(', '))}.` : 'None of the four is available.'}</p>`;
     }
     $('detail').innerHTML = `<div class="detail"><div class="dtop"><button class="back" id="dback">← Map</button><button class="back" id="dclose" aria-label="Close">✕</button></div><h3>${esc(r.name)}</h3>${top}
       <h3>Output, prices and jobs</h3><ul class="facts">${out}</ul><h3>Live activity</h3><ul class="facts">${live}</ul>
-      <h3>Government and trade</h3><ul class="facts">${gov}</ul><h3>People and health</h3><ul class="facts">${ppl}</ul>${F.html()}
+      <h3>Government and trade</h3><ul class="facts">${gov}</ul><h3>People and health</h3><ul class="facts">${ppl}</ul>${(() => { const dv = devFacts(iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${F.html()}
       <div class="dyr"><h3>Year by year</h3><select id="dysel" aria-label="Calendar year"></select></div><ul class="facts" id="dyfacts"></ul><div id="dyfoot"></div></div>`;
     $('dback').addEventListener('click', () => $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }));
     $('dclose').addEventListener('click', () => { $('detail').innerHTML = ''; $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
@@ -436,7 +521,7 @@
     sel.value = String(YEAR);
     sel.onchange = () => { YEAR = +sel.value; detailYear(iso); renderYears(); };
     const star = YEAR >= AN.estimate_from ? '*' : '';
-    const items = YCOLS.map(([k, l, f]) => { const x = anLag(iso, k, YEAR); return x ? fact(l, anCell(x, f, k, star), `${x.y}${x.lag ? ' · LATEST PUBLISHED' : ''} · ${AN.keys[k]?.rel === 'weo' ? 'IMF WEO' : 'WORLD BANK'}`) : ''; }).join('');
+    const items = YCOLS.map(([k, l, f]) => { const x = anLag(iso, k, YEAR); return x ? fact(l, anCell(x, f, k, star), `${x.y}${x.lag ? ' · LATEST PUBLISHED' : ''} · ${AN.keys[x.k || k]?.rel === 'weo' ? 'IMF WEO' : 'WORLD BANK'}`) : ''; }).join('');
     $('dyfacts').innerHTML = items || `<li><div class="m">No annual data published for ${YEAR}.</div></li>`;
     $('dyfoot').innerHTML = yearFoot(YEAR, [iso]);
   }
@@ -510,7 +595,7 @@
       const F = foot();
       (D.prices || []).forEach((p) => F.rel(p.rel, p.date, 'M', 'Commodity prices', 'World Bank Pink Sheet'));
       if (T?.window) F.rel('portwatch', T.window[1], 'D', 'Ships and port cargo', 'IMF PortWatch');
-      E.forEach((e) => { const x = e.indicators?.unemployment; if (x) F.rel(x.rel, x.date, x.chg?.f, 'Unemployment (Sahm rule)', x.source); });
+      E.forEach((e) => { const x = e.indicators?.unemployment; if (x && !x.annual && ok(e.math?.sahm)) F.rel(x.rel, x.date, x.chg?.f, 'Unemployment (Sahm rule)', x.source); });
       F.rel('site', D.generated_at, 'D', 'Scores', 'World Economy Live');
       $('f-changes').innerHTML = F.html();
     }
@@ -734,16 +819,20 @@
 
   // ---------------- year by year (calendar years; not period-dependent) ----------------
   let AN = null, YEAR = null, yfilt = 'g20', yq = '';
-  const anVal = (iso, k, y) => { const r = AN?.data?.[iso]?.[k]; if (!r) return null; const v = r[1][y - r[0]]; return ok(v) ? v : null; };
+  // World Bank stand-ins where the IMF WEO has no series for a country
+  const FBK = { gdp_growth: 'gdp_growth_wb', inflation_a: 'inflation_wb', unemployment_a: 'unemployment_wb', gdp_usd: 'gdp_usd_wb' };
+  const AK = (iso, k) => (AN?.data?.[iso]?.[k] || !FBK[k] || !AN?.data?.[iso]?.[FBK[k]] ? k : FBK[k]);
+  const anVal = (iso, k, y) => { k = AK(iso, k); const r = AN?.data?.[iso]?.[k]; if (!r) return null; const v = r[1][y - r[0]]; return ok(v) ? v : null; };
   // value for year y, or — when the source has not published y yet — its latest year, with that year as a marker
   const anLag = (iso, k, y) => {
-    const v = anVal(iso, k, y); if (ok(v)) return { v, y };
+    k = AK(iso, k);
+    const v = anVal(iso, k, y); if (ok(v)) return { v, y, k };
     const r = AN?.data?.[iso]?.[k]; if (!r) return null;
     const lastY = r[0] + r[1].length - 1; if (lastY >= y) return null;
-    for (let j = r[1].length - 1; j >= 0; j--) if (ok(r[1][j])) return { v: r[1][j], y: r[0] + j, lag: true };
+    for (let j = r[1].length - 1; j >= 0; j--) if (ok(r[1][j])) return { v: r[1][j], y: r[0] + j, lag: true, k };
     return null;
   };
-  const anCell = (x, f, k, star) => (x ? f(x.v) + (AN.keys[k]?.rel === 'weo' && !x.lag ? star : '') + (x.lag ? ` <span class="na">(${x.y})</span>` : '') : '<span class="na">—</span>');
+  const anCell = (x, f, k, star) => (x ? f(x.v) + (AN.keys[x.k || k]?.rel === 'weo' && !x.lag ? star : '') + (x.lag ? ` <span class="na">(${x.y})</span>` : '') : '<span class="na">—</span>');
   const YCOLS = [['gdp_growth', 'GDP growth', (v) => sg(v), 1], ['inflation_a', 'Inflation', (v) => num(v) + '%', -1], ['unemployment_a', 'Unemployment', (v) => num(v) + '%', -1],
     ['gdp_usd', 'GDP', (v) => usd(v), 0], ['gov_debt', 'Gov. debt % GDP', (v) => num(v, 0), 0], ['gov_balance', 'Budget bal. % GDP', (v) => sg(v, 1, ''), 1],
     ['current_account', 'Current acct % GDP', (v) => sg(v, 1, ''), 1], ['net_exports', 'Trade bal. % GDP', (v) => sg(v, 1, '') + sd(v), 1],
@@ -855,7 +944,7 @@
   }
   function refresh() {
     openIdx = null; $('detail').innerHTML = '';
-    drawCP(); renderAll(); renderYears();
+    drawCP(); renderAll(); renderYears(); renderDev();
     if (scIso && $('schart').innerHTML) showHist(scIso);
   }
   if (ASOF) {

@@ -121,7 +121,17 @@ WB = {  # key: (indicator, label, unit)
     "reserves_months": ("FI.RES.TOTL.MO", "Reserves", "months of imports"),
     "private_credit":  ("FS.AST.PRVT.GD.ZS", "Bank credit to private sector", "% of GDP"),
     "debt_wb":         ("GC.DOD.TOTL.GD.ZS", "Central government debt", "% of GDP"),
+    # World Bank stand-ins where the IMF WEO has no series for a country (they count toward scores)
+    "gdp_growth_wb":   ("NY.GDP.MKTP.KD.ZG", "GDP growth", "%"),
+    "inflation_wb":    ("FP.CPI.TOTL.ZG", "Inflation (consumer prices)", "%"),
+    "unemployment_wb": ("SL.UEM.TOTL.ZS", "Unemployment (ILO estimate)", "%"),
+    "gdp_usd_wb":      ("NY.GDP.MKTP.CD", "GDP", "US$"),
 }
+WB_FALLBACK = {"gdp_growth": "gdp_growth_wb", "inflation_a": "inflation_wb", "unemployment_a": "unemployment_wb",
+               "gdp_usd": "gdp_usd_wb", "gov_debt": "debt_wb"}
+# Scores on annual data use completed calendar years only (never the current-year forecast), and need
+# a completed year no older than this many years before the view year.
+ANNUAL_MAX_AGE = 2
 VITAL_KEYS = ["population", "pop_growth", "age65", "fertility", "life_exp", "health_spend", "net_migration", "gdp_pc", "gini", "urban"]
 
 # ---------------- Commodities (World Bank Pink Sheet) ----------------

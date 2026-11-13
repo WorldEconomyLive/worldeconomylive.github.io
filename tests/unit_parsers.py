@@ -121,3 +121,62 @@ assert abs(m["sahm"] - (4.6 - 4.0)) < 1e-9, m["sahm"]      # (4.3+4.6+4.9)/3 = 4
 e["_series"]["unemployment"] = None
 assert "sahm" not in RUN.macro_math(e)                    # annual-only unemployment: no Sahm
 print("sahm ok")
+
+# IMF routes: DataMapper down -> IMF data portal (SDMX CSV); both down -> DBnomics flagged as an older copy
+def sdmx_get(u, **k):
+    if "datamapper" in u:
+        raise RuntimeError("HTTP 403")
+    if "api.imf.org" in u:
+        lines = ["DATAFLOW,COUNTRY,INDICATOR,FREQUENCY,TIME_PERIOD,OBS_VALUE"] + [f"IMF.RES:WEO,{c},PCPIPCH,A,{y},{v}" for c in ["ARG", "UVK"] + [f"X{i:02d}" for i in range(60)] for y, v in ((2024, 219.9), (2025, 41.9))]
+        return types.SimpleNamespace(headers={}, text="\n".join(lines))
+    raise RuntimeError("unexpected " + u)
+S._get = sdmx_get
+S.REL.pop("weo", None); S._WEO_FAIL.clear(); S._WEO_OK.clear()
+d, rel = S.weo_all("PCPIPCH.pcent_change", ["WEO:latest"])
+assert d["ARG"][pd.Timestamp("2025-07-01")] == 41.9 and "XKX" in d and "UVK" not in d, sorted(d)[:5]
+assert "weo.imf_datamapper" in S.STATUS and not S.STATUS["weo.imf_datamapper"]["ok"] and "403" in S.STATUS["weo.imf_datamapper"]["note"]
+
+
+def dbn_get(u, **k):
+    if "api.db.nomics.world/v22/series" in u:
+        return types.SimpleNamespace(headers={}, json=lambda: {"series": {"docs": [{"series_code": f"{c}.PCPIPCH.pcent_change", "period": ["2024", "2025"], "value": [219.9, 35.9]} for c in ["ARG"] + [f"X{i:02d}" for i in range(60)]]}})
+    if "api.db.nomics.world/v22/datasets" in u:
+        return types.SimpleNamespace(headers={}, json=lambda: {"datasets": {"docs": [{"name": "World Economic Outlook (WEO) - April 2025", "updated_at": "2025-04-22"}]}})
+    raise RuntimeError("HTTP 403")
+S._get = dbn_get
+S.REL.pop("weo", None); S._WEO_FAIL.clear(); S._WEO_OK.clear()
+d, rel = S.weo_all("PCPIPCH.pcent_change", ["WEO:latest"])
+assert S.REL["weo"]["stale"] and "older copy via DBnomics" in S.REL["weo"]["label"], S.REL["weo"]
+assert not S.STATUS["weo.fallback"]["ok"] and "imf_sdmx" in "".join(S.STATUS), S.STATUS.get("weo.fallback")
+print("imf routes ok:", S.REL["weo"]["label"])
+
+# OWID grapher CSV: countries only, OWID region codes dropped, Kosovo mapped to XKX
+csv = "Entity,Code,Year,hdi\n" + "\n".join(f"C{i},{('X%02d' % i)},2023,0.{i:02d}" for i in range(40)) + "\nWorld,OWID_WRL,2023,0.75\nKosovo,OWID_KOS,2023,0.8"
+S._get = lambda u, **k: types.SimpleNamespace(headers={}, text=csv) if u.split("?")[0].endswith(".csv") else types.SimpleNamespace(headers={}, json=lambda: {"columns": {"hdi": {"lastUpdated": "2025-05-07", "citationShort": "UNDP, Human Development Report (2025)"}}})
+o = S.owid_grapher("human-development-index")
+assert "OWID_WRL" not in set(o.iso3) and "XKX" in set(o.iso3) and len(o) == 41, o.tail()
+assert S.REL["owid:human-development-index"]["released"] == "2025-05-07"
+print("owid ok")
+
+# Ember low-carbon share: complete years only
+rows = []
+for c in ["USA"] + [f"X{i:02d}" for i in range(60)]:
+    for m in pd.date_range("2024-01-01", "2025-06-01", freq="MS"):
+        rows += [{"ISO 3 code": c, "Date": m, "Variable": "Clean", "Unit": "TWh", "Value": 40}, {"ISO 3 code": c, "Date": m, "Variable": "Total Generation", "Unit": "TWh", "Value": 100},
+                 {"ISO 3 code": c, "Date": m, "Variable": "Demand", "Unit": "TWh", "Value": 98}]
+df = pd.DataFrame(rows)
+cols = {str(c).lower().strip(): c for c in df.columns}
+S._ember_clean(df, cols, "Date", "Variable", "Value")
+e = S.EMBER_CLEAN["df"]
+assert set(e.year) == {2024} and abs(e.value.iloc[0] - 40) < 1e-9, e.head()
+print("ember clean share ok")
+
+# Kosovo has a map key; headline leads with the band
+assert RUN.cty("XKX") == ("XKX", "Kosovo") and RUN.cty("GRL")[0] == 304
+h = RUN.headline(25.0, {"A": {"score": 30, "pillars": {"labor": -2.0, "prices": 0.5}}}, [], None)
+assert h.startswith("Global economy under stress (25).") and "Main drag: jobs" in h, h
+# completed years only: the current-year forecast is ignored
+y0 = RUN.TODAY.year
+sr = pd.Series([1.0] * 20 + [9.0], index=pd.to_datetime([f"{y}-07-01" for y in range(y0 - 20, y0 + 1)]))
+assert RUN.done_years(sr).index[-1].year == y0 - 1
+print("kosovo, headline, completed years ok")

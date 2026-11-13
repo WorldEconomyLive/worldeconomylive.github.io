@@ -290,16 +290,18 @@ def dbnomics(series_id: str) -> pd.Series:
 
 
 _DM_LABEL = {}
+ALIAS3 = {"UVK": "XKX", "KOS": "XKX"}   # the IMF codes Kosovo UVK; the World Bank (and this site) use XKX
 
 
 def weo_datamapper(subj):
     """IMF DataMapper API: the current WEO edition, served by the IMF itself. Returns {iso3: annual series}."""
     base = "https://www.imf.org/external/datamapper/api/v1"
-    hdr = {"User-Agent": "Mozilla/5.0 (compatible; WorldEconomyLive/1.0)", "Accept": "application/json"}
+    hdr = dict(IMF_HDR, Accept="application/json")
     j = _get(f"{base}/{subj}", timeout=90, tries=3, headers=hdr).json()
     vals = (j.get("values") or {}).get(subj) or {}
     out = {}
     for iso, by in vals.items():
+        iso = ALIAS3.get(iso, iso)
         if len(iso) != 3 or not by:
             continue
         try:
@@ -320,14 +322,71 @@ def weo_datamapper(subj):
     return out
 
 
+IMF_HDR = {"User-Agent": "Mozilla/5.0 (compatible; WorldEconomyLive/1.0)"}
+_WEO_OK = set()
+_WEO_FAIL = {}     # route -> first error, so a dead route is tried once per run and its error reaches the status panel
+
+
+def _weo_label_now():
+    """WEO editions come out in April and October: name the edition current today."""
+    t = datetime.utcnow()
+    if (t.month, t.day) >= (10, 15):
+        return f"WEO October {t.year}"
+    if (t.month, t.day) >= (4, 15):
+        return f"WEO April {t.year}"
+    return f"WEO October {t.year - 1}"
+
+
+def weo_sdmx(subj):
+    """IMF data portal (SDMX), the WEO's home since October 2025: COUNTRY.INDICATOR.FREQUENCY, all countries."""
+    tries = [
+        (f"https://api.imf.org/external/sdmx/2.1/data/IMF.RES,WEO/.{subj}.A?startPeriod=1980",
+         "application/vnd.sdmx.data+csv;version=1.0.0"),
+        (f"https://api.imf.org/external/sdmx/3.0/data/dataflow/IMF.RES/WEO/+/*.{subj}.A?c[TIME_PERIOD]=ge:1980",
+         "application/vnd.sdmx.data+csv;version=2.0.0"),
+    ]
+    last = None
+    for url, acc in tries:
+        try:
+            r = _get(url, timeout=120, tries=2, headers=dict(IMF_HDR, Accept=acc))
+            df = pd.read_csv(io.StringIO(r.text), dtype=str)
+            cc = next(c for c in df.columns if c.upper() in ("COUNTRY", "REF_AREA") or c.upper().startswith("COUNTRY"))
+            tc = next(c for c in df.columns if c.upper() == "TIME_PERIOD")
+            vc = next(c for c in df.columns if c.upper() == "OBS_VALUE")
+            out = {}
+            for iso, g in df.groupby(cc):
+                iso = ALIAS3.get(str(iso), str(iso))
+                if len(iso) != 3:
+                    continue
+                try:
+                    out[iso] = _series(g[vc], [f"{str(y)[:4]}-07-01" for y in g[tc]], iso)
+                except RuntimeError:
+                    pass
+            if len(out) < 50:
+                raise RuntimeError(f"only {len(out)} countries")
+            set_rel("weo", "IMF World Economic Outlook (IMF data portal)", None, label=_weo_label_now())
+            return out
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"IMF data portal: {last}")
+
+
 def weo_all(code, releases):
     """All countries for one WEO subject.unit. Returns ({iso3: series}, release_used).
-    The IMF's own DataMapper API comes first: the DBnomics mirror can lag several WEO editions."""
+    Order: IMF DataMapper, then the IMF data portal (both the IMF itself), then the DBnomics mirror,
+    which can lag several WEO editions and is flagged as an older copy when used."""
     subj, unit = code.split(".")
-    try:
-        return weo_datamapper(subj), _DM_LABEL.get("label", "WEO (current edition)")
-    except Exception:
-        pass
+    for route, fn, lab in (("datamapper", weo_datamapper, lambda: _DM_LABEL.get("label", "WEO (current edition)")),
+                           ("sdmx", weo_sdmx, _weo_label_now)):
+        if route in _WEO_FAIL and route not in _WEO_OK:
+            continue                       # a route that never worked this run is not retried for every subject
+        try:
+            out = fn(subj)
+            _WEO_OK.add(route)
+            return out, lab()
+        except Exception as e:
+            _WEO_FAIL[route] = f"{type(e).__name__}: {e}"
+            log(f"weo.imf_{route}", False, f"{subj}: {_WEO_FAIL[route]}")
     dims = json.dumps({"weo-subject": [subj], "unit": [unit]})
     for rel in releases:
         try:
@@ -337,6 +396,7 @@ def weo_all(code, releases):
             out = {}
             for d in docs:
                 iso = d.get("series_code", "").split(".")[0]
+                iso = ALIAS3.get(iso, iso)
                 try:
                     out[iso] = _series([None if v == "NA" else v for v in d["value"]],
                                        [_period_to_ts(p) for p in d["period"]], iso)
@@ -344,19 +404,25 @@ def weo_all(code, releases):
                     pass
             if out:
                 if "weo" not in REL:
+                    lab = None
                     try:
                         dj = _get(f"https://api.db.nomics.world/v22/datasets/IMF/{rel}?format=json", timeout=60, tries=2).json()
                         doc = (dj.get("datasets", {}).get("docs") or [{}])[0]
-                        lab = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
-                                        str(doc.get("name", "")) + " " + str(doc.get("description", "")))
-                        set_rel("weo", "IMF World Economic Outlook (via DBnomics)", doc.get("updated_at") or doc.get("provider_updated_at"),
-                                label=f"WEO {lab.group(1)} {lab.group(2)}" if lab else rel)
+                        m = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
+                                      str(doc.get("name", "")) + " " + str(doc.get("description", "")))
+                        lab = f"WEO {m.group(1)} {m.group(2)}" if m else None
+                        upd = doc.get("updated_at") or doc.get("provider_updated_at")
                     except Exception:
-                        set_rel("weo", "IMF World Economic Outlook (via DBnomics)", None, label=rel)
+                        upd = None
+                    cur = _weo_label_now()
+                    flag = "" if lab == cur else f" (older copy via DBnomics; IMF unreachable; current edition is {cur.replace('WEO ', '')})"
+                    set_rel("weo", "IMF World Economic Outlook (via DBnomics)", upd, label=(lab or rel) + flag)
+                    REL["weo"]["stale"] = lab != cur
+                    log("weo.fallback", lab == cur, f"using DBnomics {lab or rel}" + ("" if lab == cur else f"; current edition is {cur}"))
                 return out, rel
         except Exception:
             continue
-    raise RuntimeError("WEO unavailable")
+    raise RuntimeError("WEO unavailable: " + "; ".join(f"{k}: {v}" for k, v in _WEO_FAIL.items()))
 
 
 # ---------------- BIS (central bank policy rates) ----------------
@@ -621,6 +687,39 @@ def _col(cols, *keys, exclude=()):
     return None
 
 
+EMBER_CLEAN: dict = {}     # {"df": DataFrame(iso3, year, value)}: low-carbon share of generation, completed years
+
+
+def _ember_clean(df, cols, date, src, val):
+    """Share of electricity generation from low-carbon sources (Ember's 'Clean' aggregate: renewables + nuclear),
+    by calendar year, from the same monthly file: clean TWh / total generation TWh, years with all 12 months."""
+    gen = _col(cols, "generation (twh)", exclude=("change", "share")) or val
+    unit = cols.get("unit")
+    x = df
+    if unit and gen == val:
+        x = x[x[unit].astype(str).str.upper().str.contains("TWH")]
+    name = x[src].astype(str).str.strip().str.lower()
+    iso = _col(cols, "iso 3", "iso3", "country code", "iso")
+    if iso:
+        codes = x[iso]
+    else:
+        area = _col(cols, "area", "country", "entity", exclude=("type", "member"))
+        codes = x[area].map(_area_iso3)
+    t = pd.DataFrame({"iso3": codes.values, "date": pd.to_datetime(x[date], errors="coerce").values,
+                      "v": pd.to_numeric(x[gen], errors="coerce").values, "n": name.values}).dropna()
+    t = t[t.iso3.astype(str).str.len() == 3]
+    cl = t[t.n == "clean"].groupby(["iso3", t.date.dt.year])["v"].agg(["sum", "count"])
+    tot = t[t.n.isin(["total generation", "total"])].groupby(["iso3", t.date.dt.year])["v"].agg(["sum", "count"])
+    j = cl.join(tot, lsuffix="_c", rsuffix="_t", how="inner")
+    j = j[(j.count_c == 12) & (j.count_t == 12) & (j.sum_t > 0)]
+    if len(j) < 50:
+        raise RuntimeError(f"only {len(j)} country-years")
+    out = (j.sum_c / j.sum_t * 100).rename("value").reset_index()
+    out.columns = ["iso3", "year", "value"]
+    EMBER_CLEAN["df"] = out
+    log("ember.clean_share", True, f"{out.iso3.nunique()} countries")
+
+
 def ember_monthly() -> pd.DataFrame:
     """Monthly electricity demand (TWh) by ISO3. Columns: iso3, date, value.
     Handles Ember's July-2026 wide format (one row per area/month/source, metrics as columns)
@@ -638,6 +737,10 @@ def ember_monthly() -> pd.DataFrame:
                    or _col(cols, "value", exclude=("change",)))
             if not (date and src and val):
                 raise RuntimeError(f"columns: {list(df.columns)[:8]}")
+            try:
+                _ember_clean(df, cols, date, src, val)
+            except Exception as e:
+                log("ember.clean_share", False, e)
             d = df[df[src].astype(str).str.strip().str.lower() == "demand"]
             unit = cols.get("unit")
             if unit and len(d):
@@ -657,6 +760,40 @@ def ember_monthly() -> pd.DataFrame:
         except Exception as e:
             last = (str(e) or type(e).__name__)[:80]
     raise RuntimeError(last or "ember unavailable")
+
+
+# ---------------- Our World in Data grapher CSVs (OWID's work CC BY 4.0; each indicator keeps its original licence) ----------------
+OWID_ALIAS = {"OWID_KOS": "XKX"}
+
+
+def owid_grapher(slug):
+    """One OWID chart's data. Returns DataFrame(iso3, year, value); countries only (OWID_ region codes dropped)."""
+    base = f"https://ourworldindata.org/grapher/{slug}"
+    hdr = {"User-Agent": "WorldEconomyLive/1.0 (data fetch)"}
+    r = _get(f"{base}.csv?v=1&csvType=full&useColumnShortNames=true", timeout=120, tries=3, headers=hdr)
+    df = pd.read_csv(io.StringIO(r.text))
+    cols = {c.lower(): c for c in df.columns}
+    code, year = cols.get("code"), cols.get("year")
+    if not code or not year:
+        raise RuntimeError(f"columns: {list(df.columns)[:6]}")
+    vals = [c for c in df.columns if c not in (cols.get("entity"), code, year) and pd.api.types.is_numeric_dtype(df[c])]
+    if not vals:
+        raise RuntimeError("no value column")
+    out = pd.DataFrame({"iso3": df[code].map(lambda c: OWID_ALIAS.get(str(c), str(c))), "year": pd.to_numeric(df[year], errors="coerce"),
+                        "value": pd.to_numeric(df[vals[0]], errors="coerce")}).dropna()
+    out = out[out.iso3.str.len() == 3]
+    out["year"] = out["year"].astype(int)
+    if out.iso3.nunique() < 30:
+        raise RuntimeError(f"only {out.iso3.nunique()} countries")
+    upd, cite = None, None
+    try:
+        m = _get(f"{base}.metadata.json?v=1&csvType=full&useColumnShortNames=true", timeout=60, tries=2, headers=hdr).json()
+        col = next(iter((m.get("columns") or {}).values()), {})
+        upd, cite = col.get("lastUpdated"), col.get("citationShort") or (m.get("chart") or {}).get("citation")
+    except Exception:
+        pass
+    set_rel(f"owid:{slug}", "Our World in Data", upd, basis="dataset", label=cite)
+    return out
 
 
 # ---------------- Freight by mode outside the US (open data) ----------------
