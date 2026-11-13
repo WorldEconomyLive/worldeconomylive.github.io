@@ -140,3 +140,7 @@ html,body{overflow-anchor:none}
 
 .brand{font-family:var(--sans);font-weight:700;font-size:16px;letter-spacing:-.01em;line-height:1}.brand b{font-weight:700}body.navtight .brand{letter-spacing:-.01em}
 .brand .dot{width:7px;height:7px;margin:0 0 0 6px;vertical-align:2px}
+.brand .bname{font-family:var(--mono);font-weight:400;font-size:12px;letter-spacing:.18em;color:var(--ink);margin-left:10px;vertical-align:1px}.brand .bname b{font-weight:500}
+body.navtight .brand .bname{letter-spacing:.12em}
+body.navscroll nav{justify-content:flex-start;-webkit-mask-image:linear-gradient(to right,transparent 0,#000 18px,#000 calc(100% - 28px),transparent 100%);mask-image:linear-gradient(to right,transparent 0,#000 18px,#000 calc(100% - 28px),transparent 100%);padding:0 18px 0 10px}
+@media (max-width:420px){.brand .bname{font-size:10px;letter-spacing:.1em;margin-left:8px}}

@@ -1170,10 +1170,11 @@
   const nav = document.querySelector('header.bar nav'), btn = document.getElementById('navbtn');
   // links in a row if they fit; then a tighter row (smaller spacing, update time hidden); only then the Sections menu
   const fit = () => {
-    document.body.classList.remove('navmenu', 'navtight'); nav.classList.remove('open'); btn.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('navmenu', 'navtight', 'navscroll'); nav.classList.remove('open'); btn.setAttribute('aria-expanded', 'false');
     const fits = () => { const gap = parseFloat(getComputedStyle(nav).columnGap) || 0;
       return links.reduce((s, a) => s + a.getBoundingClientRect().width, 0) + gap * (links.length - 1) <= nav.clientWidth + 1; };
-    if (!fits()) { document.body.classList.add('navtight'); if (!fits()) { document.body.classList.remove('navtight'); document.body.classList.add('navmenu'); } }
+    // wide screens: a row that scrolls sideways; phones: the Sections menu
+    if (!fits()) { document.body.classList.add('navtight'); if (!fits()) { if (matchMedia('(max-width:760px)').matches) { document.body.classList.remove('navtight'); document.body.classList.add('navmenu'); } else document.body.classList.add('navscroll'); } }
     hdrVar();
   };
   // sections stop just below the header, whatever its height
@@ -1193,6 +1194,9 @@
   }));
   const set = (id) => { links.forEach((a) => a.classList.toggle('on', a === byId[id]));
     if (byId[id]) btn.textContent = byId[id].textContent + ' ▾';
+    // in a sideways-scrolling row, keep the current section's link in view
+    if (byId[id] && document.body.classList.contains('navscroll')) { const l = byId[id], L = l.offsetLeft - nav.offsetLeft, R = L + l.offsetWidth;
+      if (L < nav.scrollLeft + 20) nav.scrollTo({ left: L - 24, behavior: 'smooth' }); else if (R > nav.scrollLeft + nav.clientWidth - 30) nav.scrollTo({ left: R - nav.clientWidth + 34, behavior: 'smooth' }); }
     const hdr = document.querySelector('header.bar'), h0 = hdr.offsetHeight;
     document.body.classList.toggle('noper', !PERSEC.has(id));
     const dh = hdr.offsetHeight - h0;            // keep the page still when the header row appears or goes (narrow screens)
