@@ -831,7 +831,7 @@ def ember_yearly() -> pd.DataFrame:
             out["year"] = out["year"].astype(int)
             if out.iso3.nunique() < 50:
                 raise RuntimeError(f"only {out.iso3.nunique()} countries")
-            set_rel("ember_yearly", "Ember, Yearly Electricity Data", resp.headers.get("Last-Modified"), label="Yearly Electricity Data")
+            set_rel("ember_yearly", "Ember", resp.headers.get("Last-Modified"), label="Yearly Electricity Data")
             return out.groupby(["iso3", "year", "source"], as_index=False)["twh"].sum()
         except Exception as e:
             last = (str(e) or type(e).__name__)[:100]
@@ -923,7 +923,7 @@ def eia_energy() -> pd.DataFrame:
                 w2["lowcarbon"] = low.clip(lower=0)
             w2["total"] = col("total")
             out = w2.reset_index().melt(id_vars=["iso3", "year"], var_name="fuel", value_name="qbtu").dropna()
-            set_rel("eia_intl", "U.S. Energy Information Administration, International Energy Statistics", resp.headers.get("Last-Modified"),
+            set_rel("eia_intl", "U.S. Energy Information Administration", resp.headers.get("Last-Modified"),
                     label="International Energy Statistics")
             return out
         except Exception as e:

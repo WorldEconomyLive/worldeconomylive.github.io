@@ -128,6 +128,70 @@
         const r = rel.get(k); r.dates.push(String(date).slice(0, 10)); if (what) r.what.add(what); if (!r.f) r.f = f; if (span) r.span = true;
       },
       add(name, o) { if (o) items.push([name, o]); },
+      _rel: rel, _items: items,
+      absorb(G) {
+        for (const [k, r] of G._rel) { if (!rel.has(k)) rel.set(k, { dates: [], f: r.f, what: new Set(), fallback: r.fallback, span: r.span });
+          const t = rel.get(k); t.dates.push(...r.dates); r.what.forEach((w) => t.what.add(w)); if (r.span) t.span = true; }
+        items.push(...G._items); return this;
+      },
+      // condensed: one line per source (what was used and its latest period, publication dates as one range), then every
+      // credit or notice the sources ask for, each once
+      htmlc(extraNotes = []) {
+        const groups = new Map(), lic = new Map(), oecd = new Set(), orig = new Set(), undated = new Set(); let oyr = '', siteW = null;
+        const shortM = (t) => t.replace(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/g, (m) => m.slice(0, 3));
+        for (const [k, r] of rel) {
+          const ds = [...r.dates].sort(), hi = plab(ds[ds.length - 1], r.f);
+          const n = notice(k, hi);
+          if (n && n[0] === 'oecd') { oecd.add(n[1]); oyr = n[2]; }
+          else if (n && n[0].startsWith('dev:')) { const dk = n[0].slice(4); if (DEVLIC[dk]) lic.set(DEVLIC[dk][0], DEVLIC[dk][1]); else orig.add(DSHORT[dk] || ''); }
+          else if (n && !lic.has(n[0])) lic.set(n[0], n[1]);
+          if (k === 'site') { siteW = [...r.what]; continue; }
+          const R = (D.rel || {})[k] || (D.rebuilt && window.WELEngine ? { source: r.fallback, basis: k === 'weo' ? 'weo' : k.startsWith('wb:') ? 'wb' : 'lag', lag: window.WELEngine.lagOf(k) } : {});
+          const when = ['lag', 'weo', 'wb'].includes(R.basis) ? lagWhen(R, ds[ds.length - 1], r.f)
+            : R.released ? (R.basis === 'dataset' ? `dataset last updated ${mdy(R.released)}` : `released ${mdy(R.released)}`) : '';
+          const prov = k.startsWith('oecd:') ? 'OECD' : k === 'weo' ? `IMF World Economic Outlook${R.label ? ' (' + R.label + ')' : ''}` : k.startsWith('wb:') ? 'World Bank WDI'
+            : k.startsWith('owid:') ? 'Our World in Data' : k === 'eia_intl' ? 'U.S. EIA' : k.startsWith('ember') ? 'Ember' : k === 'portwatch' ? 'IMF PortWatch' : (R.source || r.fallback || k);
+          if (!groups.has(prov)) groups.set(prov, { by: new Map(), dates: [], counted: false });
+          const g = groups.get(prov), lab = shortM(r.span && ds.length > 1 && plab(ds[0], r.f) !== hi ? `${plab(ds[0], r.f)}–${hi}` : hi);
+          if (!g.by.has(lab)) g.by.set(lab, new Set());
+          (r.what.size ? r.what : new Set([''])).forEach((w) => g.by.get(lab).add(CANON[w] || w));
+          const m = when.match(/\d\d\/\d\d\/\d{4}/); if (m) { g.dates.push(m[0]); if (/counted/.test(when)) g.counted = true; } else undated.add(prov);
+        }
+        const toISO = (x) => x.slice(6) + x.slice(0, 2) + x.slice(3, 5);
+        const lines = [];
+        for (const [prov, g] of groups) {
+          const parts = [...g.by].map(([lab, ws]) => `${esc([...ws].filter(Boolean).join(', '))} ${esc(lab)}`.trim());
+          const dd = [...new Set(g.dates)].sort((a, b) => toISO(a).localeCompare(toISO(b)));
+          const when = dd.length ? ` · ${g.counted ? 'counted as released' : 'published'} ${dd[0]}${dd.length > 1 ? '–' + dd[dd.length - 1] : ''}` : '';
+          lines.push(`<b>${esc(prov)}</b>: ${parts.join('; ')}${when}`);
+        }
+        if (siteW) lines.push(`<b>This site</b>: ${esc(siteW.join(', '))} — ${D.rebuilt ? `rebuilt for ${mdy(D.asof_view)} with today's method` : `computed ${mdy(D.generated_at)}`} from the sources above.`);
+        if (undated.size) lines.push(`Release dates not published by: ${esc([...undated].join(', '))}.`);
+        // the n/a explanations, as in the full footnote
+        const by = { s: new Map(), f: [], g: [], x: [], z: [] }; let avg = false, perYear = false;
+        for (const [n, o] of items) { const r = o.r?.[PI]; if (o.a?.[PI] === '1') avg = true; if (o.k === 'pct' && PI >= 4 && ok(o.v?.[PI])) perYear = true;
+          if (r === 's') { const k = o.s || 'n/a'; if (!by.s.has(k)) by.s.set(k, []); by.s.get(k).push(n); } else if (r === 'f') by.f.push(n); else if (r === 'g') by.g.push(n); else if (r === 'x') by.x.push(n); else if (r === 'z') by.z.push(n); }
+        const names = (a) => { const u = [...new Set(a)]; return esc(u.slice(0, 4).join(', ')) + (u.length > 4 ? ` and ${u.length - 4} more` : ''); };
+        const na = [];
+        for (const [start, ns] of [...by.s].sort()) na.push(start === 'n/a' ? `no history yet: ${names(ns)}` : `history begins ${esc(start)}: ${names(ns)}`);
+        if (by.f.length) na.push(`too infrequent for ${PERS[PI]}: ${names(by.f)}`);
+        if (by.g.length) na.push(`comparison point missing at source: ${names(by.g)}`);
+        if (by.x.length) na.push(`not meaningful at or below zero: ${names(by.x)}`);
+        if (by.z.length) na.push(`seasonal, compared 1 year or more apart: ${names(by.z)}`);
+        const notes = [...extraNotes];
+        if (na.length) notes.push(`n/a for ${PERS[PI]} — ${na.join('; ')}.`);
+        if (avg) notes.push(`${PERS[PI]} compares 12-month averages.`);
+        if (perYear) notes.push('Changes over 3 years or more are compound annual rates.');
+        // credits: required wording kept as written; the rest shortened to source and licence
+        const SHORT = { weo: `IMF data: subject to the IMF's terms (${lnk('www.imf.org/en/about/copyright-and-terms')})`, portwatch: `IMF data: subject to the IMF's terms (${lnk('www.imf.org/en/about/copyright-and-terms')})`,
+          wb: 'World Bank WDI, CC BY 4.0', pink: 'World Bank Pink Sheet, CC BY 4.0', ember: 'Ember, CC BY 4.0', ember_y: 'Ember, CC BY 4.0', eia: 'U.S. EIA, public domain' };
+        const credits = new Set();
+        if (oecd.size) credits.add(`OECD (${oyr}), ${[...oecd].join('; ')}, OECD Data Explorer, ${lnk('data-explorer.oecd.org')}`);
+        for (const [k, t] of lic) credits.add(SHORT[k] || t.replace(/\s*(Changes|Shares|3-month sums)[^.]*computed by this site[^.]*\.?/g, '').replace(/\s*No endorsement[^.]*\.?/gi, '').trim());
+        orig.delete(''); if (orig.size) credits.add(`Original sources: ${[...orig].join('; ')}${[...groups.keys()].includes('Our World in Data') ? '; Our World in Data processing, CC BY 4.0' : ''}`);
+        const credit = [...credits].map((c) => c.replace(/\.$/, '')).join('. ') + (credits.size ? '. ' : '') + 'Changes, shares and scores computed by this site; no endorsement by any source is implied.';
+        return `<div class="foot fc">${lines.map((l) => `<p>${l}</p>`).join('')}${notes.map((l) => `<p class="fn">${l}</p>`).join('')}<p class="lic">${credit}</p></div>`;
+      },
       html() {
         const lines = [], merged = new Map(), lic = new Map(), oecd = new Set(); let oyr = '';
         for (const [k, r] of rel) {
@@ -209,6 +273,13 @@
   // ---------------- development & environment (slow annual indicators) ----------------
   let DV = null, DKEY = 'rd', DSC = null;
   const DORDER = ['rd', 'poverty', 'gdp_pc_long', 'productivity', 'hdi', 'child_mort', 'school', 'undernourish', 'labor_part', 'female_lab', 'co2_pc', 'fossil_energy', 'clean_elec', 'warming'];
+  const DSHORT = { rd: 'UNESCO Institute for Statistics via World Bank (CC BY-SA 3.0 IGO)', poverty: 'World Bank Poverty and Inequality Platform', gdp_pc_long: 'Maddison Project Database 2023 (CC BY 4.0)',
+    productivity: 'Penn World Table 11.0 (CC BY 4.0)', hdi: 'UNDP Human Development Report (CC BY 3.0 IGO)', child_mort: 'UN IGME', school: 'World Bank Human Capital Index', undernourish: 'FAO (CC BY 4.0)',
+    labor_part: 'ILO (CC BY 4.0)', female_lab: 'ILO (CC BY 4.0)', co2_pc: 'Global Carbon Project (CC BY 4.0)', clean_elec: 'Ember (CC BY 4.0)', fossil_energy: 'U.S. EIA (public domain)', warming: 'Jones et al. (CC BY 4.0)' };
+  const DEVLIC = { clean_elec: ['ember', 'Ember, CC BY 4.0'], fossil_energy: ['eia', 'U.S. EIA, public domain'] };
+  // the year-by-year table's short column names, folded into the readout's names in the condensed footnote
+  const CANON = { 'Gov. debt % GDP': 'Government debt', 'Budget bal. % GDP': 'Budget balance', 'Current acct % GDP': 'Current account', 'Life exp.': 'Life expectancy',
+    'GDP/person': 'GDP per person', 'Trade bal. % GDP': 'Net exports', 'Pop.': 'Population' };
   const DEV_MAX_AGE = 15;   // years: older figures are not shown as a country's latest
   async function loadDev() {
     if (DV) return DV;
@@ -434,6 +505,7 @@
   // ---------------- economies (grid + detail) ----------------
   const PIL = { activity: 'ACT', labor: 'JOBS', prices: 'PRICE', trade: 'TRADE' };
   let filt = 'g20', q = '', openIdx = null;
+  let READF = null;   // the open readout's footnote, joined with the year-by-year one at the end of the readout
   function card(e, i) {
     return `<button class="eco" data-i="${i}"><div class="n">${esc(e.name)}</div>
     <div class="s">${ok(e.score) ? Math.round(e.score) : '—'}</div><div class="cc">${chg(e.score_chg, 1) || '<span class="chg na">n/a</span>'}</div><span class="pill ${esc(e.label)}">${esc(e.label)}</span>
@@ -499,6 +571,7 @@
       .map(([k]) => { F.rel(V[k].rel, `${V[k].year}-07-01`, 'A', V[k].label, 'World Bank');
         return fact(V[k].label, big(V[k].value) + (V[k].unit.startsWith('%') ? '%' : ''), `${esc(V[k].unit).toUpperCase()} · ${V[k].year}${ok(V[k].ten_years_ago) ? ' · 10Y AGO ' + big(V[k].ten_years_ago) : ''}`); }).join('');
     F.add('Score', e.score_chg);
+    READF = F;
     $('detail').innerHTML = `<div class="detail"><div class="dtop"><button class="back" id="dback">← All economies</button><button class="back" id="dclose" aria-label="Close">✕</button></div><h3>${esc(e.name)}</h3><div class="score" style="font-size:56px">${ok(e.score) ? Math.round(e.score) : '—'}<small>/100</small></div>
       <div class="cc big">${chg(e.score_chg, 1) || ''} <span class="na mono small">over ${PERS[PI]}</span></div>
       <span class="pill ${esc(e.label)}">${esc(e.label)}</span><span class="mono small" style="margin-left:10px">${esc(e.coverage || '')} PILLARS</span>
@@ -506,7 +579,7 @@
       <p class="plain">${esc(plain(e)) || 'Detailed data fills in after the first automated run.'}</p>
       ${e.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(e.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25, sg(v, 0, ''))}</div>`).join('')}</div>` : ''}
       ${live ? `<h3>Live indicators</h3><ul class="facts">${live}</ul>` : ''}${mth ? `<h3>Formulas</h3><ul class="facts">${mth}</ul>` : ''}
-      ${gov ? `<h3>Government and trade</h3><ul class="facts">${gov}</ul>` : ''}${vit ? `<h3>People and health</h3><ul class="facts">${vit}</ul>` : ''}${(() => { const dv = devFacts(e.iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${DV ? mixBlocks(e.iso3, F) : ''}${F.html()}
+      ${gov ? `<h3>Government and trade</h3><ul class="facts">${gov}</ul>` : ''}${vit ? `<h3>People and health</h3><ul class="facts">${vit}</ul>` : ''}${(() => { const dv = devFacts(e.iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${DV ? mixBlocks(e.iso3, F) : ''}
       <div class="dyr"><h3>Year by year</h3><select id="dysel" aria-label="Calendar year"></select></div><ul class="facts" id="dyfacts"></ul><div id="dyfoot"></div></div>`;
     detailYear(e.iso3);
   }
@@ -562,8 +635,9 @@
     }
     $('detail').innerHTML = `<div class="detail"><div class="dtop"><button class="back" id="dback">← Map</button><button class="back" id="dclose" aria-label="Close">✕</button></div><h3>${esc(r.name)}</h3>${top}
       <h3>Output, prices and jobs</h3><ul class="facts">${out}</ul><h3>Live activity</h3><ul class="facts">${live}</ul>
-      <h3>Government and trade</h3><ul class="facts">${gov}</ul><h3>People and health</h3><ul class="facts">${ppl}</ul>${(() => { const dv = devFacts(iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${DV ? mixBlocks(iso3, F) : ''}${F.html()}
+      <h3>Government and trade</h3><ul class="facts">${gov}</ul><h3>People and health</h3><ul class="facts">${ppl}</ul>${(() => { const dv = devFacts(iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${DV ? mixBlocks(iso3, F) : ''}
       <div class="dyr"><h3>Year by year</h3><select id="dysel" aria-label="Calendar year"></select></div><ul class="facts" id="dyfacts"></ul><div id="dyfoot"></div></div>`;
+    READF = F;
     $('dback').addEventListener('click', () => $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }));
     $('dclose').addEventListener('click', () => { $('detail').innerHTML = ''; $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
     await detailYear(iso3);
@@ -581,7 +655,9 @@
     const star = YEAR >= AN.estimate_from ? '*' : '';
     const items = YCOLS.map(([k, l, f]) => { const x = anLag(iso, k, YEAR); return x ? fact(l, anCell(x, f, k, star), `${x.y}${x.lag ? ' · LATEST PUBLISHED' : ''} · ${AN.keys[x.k || k]?.rel === 'weo' ? 'IMF WEO' : 'WORLD BANK'}`) : ''; }).join('');
     $('dyfacts').innerHTML = items || `<li><div class="m">No annual data published for ${YEAR}.</div></li>`;
-    $('dyfoot').innerHTML = yearFoot(YEAR, [iso]);
+    { const yp = yearFootParts(YEAR, [iso]), all = foot().absorb(READF || foot()).absorb(yp.F);
+      const relSrc = D.rel; D.rel = { ...(AN.rel || {}), ...(DV?.rel || {}), ...(relSrc || {}) };
+      $('dyfoot').innerHTML = all.htmlc(yp.notes.map(esc)); D.rel = relSrc; }
   }
 
   // ---------------- scorecard history chart (unchanged by the toggle) ----------------
@@ -896,21 +972,26 @@
     try { AN = await (await fetch('data/annual.json', { cache: 'no-store' })).json(); } catch (_) { AN = { data: {} }; }
     return AN;
   }
-  function yearFoot(y, isos) {
+  function yearFootParts(y, isos) {
     const F = foot('Year shown'), est = AN.estimate_from;
     let lagged = false;
     for (const [k, l] of YCOLS) {
       const meta = AN.keys?.[k]; if (!meta) continue;
-      const used = new Set(isos.map((i) => anLag(i, k, y)?.y).filter(Boolean));
-      for (const uy of used) F.rel(meta.rel, `${uy}-07-01`, 'A', l, meta.rel === 'weo' ? 'IMF World Economic Outlook' : 'World Bank');
-      if (used.size > 1 || (used.size && !used.has(y))) lagged = true;
+      const used = new Set(isos.map((i) => anLag(i, k, y)).filter(Boolean).map((x) => x.y + '|' + (x.k || k)));
+      for (const u of used) { const [uy, kk] = u.split('|'), mk = AN.keys?.[kk] || meta; F.rel(mk.rel, `${uy}-07-01`, 'A', l, mk.rel === 'weo' ? 'IMF World Economic Outlook' : 'World Bank'); }
+      const ys = new Set([...used].map((u) => +u.split('|')[0]));
+      if (ys.size > 1 || (ys.size && !ys.has(y))) lagged = true;
     }
-    const relSrc = D.rel; D.rel = { ...(AN.rel || {}), ...(relSrc || {}) };  // release dates from the same pipeline run
-    const h = F.html(); D.rel = relSrc;
-    const notes = [`Calendar year ${y} (January–December), as ${D.rebuilt ? `known on ${mdy(D.asof_view)}, with figures as published today` : 'currently published by each source'}.`];
+    const notes = [`Year by year: calendar year ${y} (January–December), as ${D.rebuilt ? `known on ${mdy(D.asof_view)}, with figures as published today` : 'currently published by each source'}.`];
     if (lagged) notes.push(`Where a source has not published ${y} yet, its latest year is shown with that year in brackets, e.g. "81.2 (${y - 1})".`);
     if (y >= est) notes.push(`IMF figures for ${est} are current-year estimates (*); recent years can still be revised by the source.`);
     else if (y >= est - 2) notes.push('IMF figures for the most recent years can still be estimates for some countries and may be revised.');
+    return { F, notes };
+  }
+  function yearFoot(y, isos) {
+    const { F, notes } = yearFootParts(y, isos);
+    const relSrc = D.rel; D.rel = { ...(AN.rel || {}), ...(relSrc || {}) };  // release dates from the same pipeline run
+    const h = F.html(); D.rel = relSrc;
     return h + `<div class="foot">${notes.map((t) => `<p class="fn">${esc(t)}</p>`).join('')}</div>`;
   }
   async function renderYears() {

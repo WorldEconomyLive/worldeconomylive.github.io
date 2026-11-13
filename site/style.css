@@ -128,3 +128,4 @@ td .chg{font-size:10px}
 @media (max-width:600px){#mixtbl .mixcell .mixbar{min-width:150px}}
 .perbar>*:not(.asofban){flex-shrink:0;white-space:nowrap}.perbar .plab{white-space:nowrap}
 body.navtight nav{gap:10px}body.navtight nav a{letter-spacing:.02em;font-size:10.5px}body.navtight .upd{display:none}body.navtight .brand{letter-spacing:.12em}
+.foot.fc p{margin:3px 0}.foot.fc b{font-weight:500;color:var(--ink2)}
