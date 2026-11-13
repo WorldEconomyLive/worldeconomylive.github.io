@@ -33,6 +33,8 @@ def fake_batch(spec, areas, start="2012-01"):
             s = pd.Series(5 + np.sin(np.arange(len(months)) / 15), index=months)
         elif "PRICES" in f:
             s = pd.Series(2.5 + rng.normal(0, 0.6, len(months)), index=months)
+        elif "FINMARK" in f and spec.get("filters", {}).get("MEASURE") == "SHARE":
+            s = pd.Series(100 * np.exp(np.cumsum(rng.normal(0.005, 0.04, len(months)))), index=months)
         elif "FINMARK" in f:
             s = pd.Series(3 + rng.normal(0, 0.2, len(months)), index=months)
         elif "IMTS" in f:

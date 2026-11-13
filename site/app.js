@@ -31,6 +31,22 @@
     const w = (Math.min(Math.abs(v), cap) / cap) * 50, l = v < 0 ? 50 - w : 50, pos = v < 0 ? `right:${50 + w + 1}%` : `left:${50 + w + 1}%`;
     return `<div class="trk"><div class="ax"></div><div class="bar-f" style="left:${l}%;width:${w}%;background:${color}"></div><span class="val" style="${pos}">${label ?? sg(v, 0)}${Math.abs(v) > cap ? '›' : ''}</span></div>`;
   }
+  // every table: a column's header follows its cells — text columns left, numbers and charts right
+  function alignTable(t) {
+    const rows = [...t.tBodies[0]?.rows || []], heads = t.tHead ? [...t.tHead.rows[0].cells] : [];
+    heads.forEach((th, j) => {
+      if (j === 0) return;
+      let kind = null;
+      for (const r of rows) { const c = r.cells[j]; if (!c) continue;
+        if (c.querySelector('svg, .mixbar, .pctl, .trk')) { kind = 'right'; break; }
+        const t_ = c.textContent.trim(); if (!t_ || t_ === '—' || t_ === 'n/a') continue;
+        kind = /^[+−\-–$€£¥]?\s?[\d.,]/.test(t_) || /^\d{4}-\d\d(-\d\d)?$/.test(t_) || /^\d\d\/\d\d\/\d{4}$/.test(t_) ? 'right' : 'left'; break; }
+      const a = kind || 'right';
+      th.style.textAlign = a; rows.forEach((r) => { if (r.cells[j]) r.cells[j].style.textAlign = a; });
+    });
+  }
+  new MutationObserver((ms) => { const ts = new Set(); for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) { if (n.tagName === 'TABLE') ts.add(n); n.querySelectorAll?.('table').forEach((t) => ts.add(t)); } ts.forEach(alignTable); })
+    .observe(document.body, { childList: true, subtree: true });
   const table = (head, rows) => `<table><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
 
   // ---------------- comparison period ----------------
@@ -905,12 +921,14 @@
         return `<tr><td class="mono">${esc(r.pair || r.name)}</td><td class="def">${esc(r.meaning || r.name)}</td><td>${v1(num(r.latest, r.latest < 10 ? 4 : 2), r.chg)}</td><td>${chg(r.ccy_chg, 1) || '—'}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(r.date)}</td></tr>`; })) : pend('Fills in on the first automated run.');
       $('f-fx').innerHTML = F.html();
       const G = foot(), GR = M.global_rates || [];
-      $('grates').innerHTML = GR.length ? table(['Economy', 'Policy rate', '10-year yield', 'Real policy rate', 'Curve (10y − policy)', 'Source', 'Date'],
+      $('grates').innerHTML = GR.length ? table(['Economy', 'Policy rate', '10-year yield', 'Real policy rate', 'Curve (10y − policy)', 'Share prices', '10-year rank', 'Stocks, 2 years', 'Source', 'Date'],
         GR.map((r) => { const c = r.c || {}; G.add(`${r.name} policy rate`, c.policy); G.add(`${r.name} 10-year`, c.long); G.add(`${r.name} real rate`, r.real_est ? null : c.real); G.add(`${r.name} curve`, c.curve);
           G.rel(r.rel, r.date, 'M', 'Policy rates', r.policy_src); if (r.rel_long) G.rel(r.rel_long, r.date, 'M', '10-year yields', 'OECD');
-          return `<tr><td>${esc(r.name)}</td><td>${ok(r.policy) ? v1(num(r.policy, 2) + '%', c.policy) : '—'}</td><td>${ok(r.long) ? v1(num(r.long, 2) + '%', c.long) : '—'}</td><td class="${cls(r.real)}">${v1(sg(r.real, 2, '%') + (r.real_est ? '*' : ''), r.real_est ? { v: Array(9).fill(null), r: 'xxxxxxxxx' } : c.real)}</td><td class="${cls(r.curve)}">${v1(sg(r.curve, 2, ' pp'), c.curve)}</td><td class="na">${esc(r.policy_src || 'OECD')}</td><td class="na">${esc(String(r.date || '').slice(0, 7))}</td></tr>`; }))
+          return `<tr><td>${esc(r.name)}</td><td>${ok(r.policy) ? v1(num(r.policy, 2) + '%', c.policy) : '—'}</td><td>${ok(r.long) ? v1(num(r.long, 2) + '%', c.long) : '—'}</td><td class="${cls(r.real)}">${v1(sg(r.real, 2, '%') + (r.real_est ? '*' : ''), r.real_est ? { v: Array(9).fill(null), r: 'xxxxxxxxx' } : c.real)}</td><td class="${cls(r.curve)}">${v1(sg(r.curve, 2, ' pp'), c.curve)}</td>${(() => { const k = r.stocks; if (!k) return '<td class="na">—</td><td class="na">—</td><td></td>';
+            G.add(`${r.name} share prices`, k.chg); G.rel(k.rel, k.date, 'M', 'Share prices', 'OECD');
+            const v = k.chg?.v?.[PI]; return `<td class="${cls(v)}">${ok(v) ? sg(v, 1) + (k.chg?.k === 'pct' && PI >= 4 ? ' <span class="na mono small">/yr</span>' : '') : '<span class="na">n/a</span>'}</td><td>${ok(k.pct10) ? `<span class="pctl"><i style="width:${Math.max(2, k.pct10)}%"></i></span> ${num(k.pct10, 0)}` : '<span class="na">—</span>'}</td><td>${spark(k.spark, 90, 22)}</td>`; })()}<td class="na">${esc(r.policy_src || 'OECD')}</td><td class="na">${esc(String(r.date || '').slice(0, 7))}</td></tr>`; }))
         : pend('Fills in on the next automated run.');
-      $('f-grates').innerHTML = G.html() + (GR.some((r) => r.real_est) ? '<div class="foot"><p class="fn">* Real rate uses latest annual inflation; no change is shown for these rows because annual inflation has no matching monthly history.</p></div>' : '');
+      $('f-grates').innerHTML = G.html() + `<div class="foot">${GR.some((r) => r.real_est) ? '<p class="fn">* Real rate uses latest annual inflation; no change is shown for these rows because annual inflation has no matching monthly history.</p>' : ''}<p class="fn">Share prices: the OECD's monthly index of each country's main stock market (average of the month), in local currency; the change is over the selected period. It tracks the national market, not the level of a named index such as the S&amp;P 500 or Nikkei 225, whose values are licensed by their owners. 10-year rank: the latest month's percentile among the last 120 months (0 = lowest, 100 = highest).</p></div>`;
       // Treasury curve: today vs the start of the selected period
       const YC = M.curve;
       if (YC?.today?.y) {

@@ -15,7 +15,7 @@ Any push that changes `pipeline/` or `site/` also triggers a run.
 
 | Data | Source |
 |---|---|
-| Inflation, unemployment, factory output, GDP, interest rates, merchandise trade | OECD Data Explorer (CC BY 4.0) |
+| Inflation, unemployment, factory output, GDP, interest rates, share prices, merchandise trade | OECD Data Explorer |
 | Euro-area fallbacks | Eurostat (via DBnomics) |
 | Central bank policy rates | Bank for International Settlements |
 | Debt, deficits, current account (incl. current-year estimates) | IMF World Economic Outlook (IMF DataMapper, then the IMF data portal; DBnomics mirror as a flagged fallback) |

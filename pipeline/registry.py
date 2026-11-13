@@ -53,6 +53,10 @@ OECD_SPECS = {
                   "filters": {"FREQ": "M", "MEASURE": "IRLT"}, "prefer": {}, "transform": "level", "bounds": 60},
     "short_rate": {"flow": "OECD.SDD.STES,DSD_STES@DF_FINMARK",
                    "filters": {"FREQ": "M", "MEASURE": "IR3TIB"}, "prefer": {}, "transform": "level", "bounds": 80},
+    # share prices: OECD index of each national stock market (monthly average), not a named index level
+    "share_prices": {"flow": "OECD.SDD.STES,DSD_STES@DF_FINMARK",
+                     "filters": {"FREQ": "M", "MEASURE": "SHARE"}, "prefer": {"ADJUSTMENT": ["N", "_Z"], "UNIT_MEASURE": ["IX", "IX_2015", "PA"]},
+                     "transform": "level"},
     "exports_usd": {"flow": "OECD.SDD.TPS,DSD_IMTS@DF_IMTS",
                     "filters_alt": IMTS_FILTERS,
                     "prefer": {"TRADE_FLOW": ["X", "C"], "FLOW": ["X", "C"], "COUNTERPART_AREA": ["W", "W00", "WLD"],

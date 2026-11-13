@@ -63,7 +63,7 @@ tr:last-child td{border-bottom:0}tbody tr:hover td{background:#08090b}.pos{color
 details{border:1px solid var(--line);border-radius:var(--r);padding:14px 18px;margin-top:10px;background:var(--panel)}summary{cursor:pointer;font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
 .fx-row{margin:16px 0;padding:12px 0;border-bottom:1px solid var(--line)}.fx-row .katex{color:var(--ink);font-size:1.1em}
 .status span{display:inline-block;font-family:var(--mono);font-size:10px;margin:4px 6px 0 0;padding:2px 7px;border-radius:4px;border:1px solid var(--line2)}.status .ok{color:var(--pos)}.status .no{color:var(--neg)}
-.spk{display:block}
+.spk{display:block;margin-left:auto}
 footer{padding:40px 0 0;font-size:10px;letter-spacing:.14em;color:var(--mute)}
 @media (max-width:760px){.bar{flex-wrap:wrap}nav{order:3;flex-basis:100%;justify-content:flex-start;gap:14px;padding-top:6px}.upd{display:none}.bar{justify-content:space-between}.hero{height:62vh;min-height:380px}.overlay{left:16px;top:16px}.score{font-size:64px}.headline{font-size:15px}.layers{top:auto;bottom:46px;right:12px;left:12px;justify-content:center}.legend{left:12px;right:12px;bottom:14px;justify-content:center}.bars .row{grid-template-columns:120px 1fr}main{padding:0 16px 60px}h2{font-size:22px}}
 .filters{display:flex;gap:6px;align-items:center;margin:0 0 12px;flex-wrap:wrap}.filters button{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;background:none;color:var(--ink2);border:1px solid var(--line2);padding:6px 11px;border-radius:99px;cursor:pointer}.filters button.on{background:var(--ink);color:#000;border-color:var(--ink)}
@@ -131,3 +131,4 @@ body.navtight nav{gap:10px}body.navtight nav a{letter-spacing:.02em;font-size:10
 .foot.fc p{margin:3px 0}.foot.fc b{font-weight:500;color:var(--ink2)}
 .pctl{display:inline-block;width:46px;height:5px;background:#16181c;border-radius:3px;vertical-align:middle;overflow:hidden;margin-right:4px}.pctl i{display:block;height:100%;background:var(--ink2)}
 .sub2{font-size:11px;color:var(--mute);margin-top:2px}
+td[style*="text-align: left"] .spk{margin-left:0}td[style*="text-align: left"] .mixbar{margin-left:0}

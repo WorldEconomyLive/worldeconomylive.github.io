@@ -177,7 +177,7 @@ def macro_block():
         e = {"name": name, "iso3": iso3, "g20": iso3 in R.G20, "indicators": {}, "pillars": {}}
         series, fb = {}, R.fallbacks(iso3)
         rawe = RAW["macro"][iso3] = {"name": name, "g20": iso3 in R.G20, "ind": {}, "bis": None}
-        for ind in ["gdp", "inflation", "unemployment", "industry", "long_rate", "short_rate", "exports_usd", "imports_usd"]:
+        for ind in ["gdp", "inflation", "unemployment", "industry", "long_rate", "short_rate", "exports_usd", "imports_usd", "share_prices"]:
             best = None   # (series, label, annual, release key)
             cands, tried = [], set()
             s0 = raw_batch.get(ind, {}).get(iso3)
@@ -219,6 +219,8 @@ def macro_block():
                                         "year_ago": value_ago(s, 335), "source": lab, "rel": rk,
                                         "chg": chg(s, IND_KIND[ind], "A" if annual else None),
                                         "spark": [] if annual else spark(s, 20 if q else 24, "QS" if q else "MS")}
+                if ind == "share_prices" and not annual:
+                    e["indicators"][ind]["pct10"] = price_stats(s)["pct10"]
         b = bis.get("XM" if iso3 in R.EURO else iso2)
         rawe["bis"] = b
         if b is not None and age_months(b) <= R.MAX_STALE_MONTHS:
@@ -382,7 +384,7 @@ RAW: dict = {"macro": {}}   # every raw input series, for the daily input archiv
 TRADE_SER: dict = {}     # iso3 -> (monthly exports, monthly imports) for the all-economies total row    # iso3 -> {column: [[YYYY-MM, value], ...]} written to site/data/series.json
 ANNUAL_HIST: dict = {}
 IND_KIND = {"gdp": "pp", "inflation": "pp", "unemployment": "pp", "industry": "pp", "long_rate": "bp", "short_rate": "bp",
-            "policy_rate": "bp", "exports_usd": "pct", "imports_usd": "pct", "trade_balance_usd": "abs"}
+            "policy_rate": "bp", "exports_usd": "pct", "imports_usd": "pct", "trade_balance_usd": "abs", "share_prices": "pct"}
 ANNUAL_KIND = {"gdp_growth": "pp", "inflation_a": "pp", "unemployment_a": "pp", "gdp_usd": "pct", "gov_debt": "pp",
                "gov_balance": "pp", "primary_balance": "pp", "revenue": "pp", "spending": "pp", "current_account": "pp",
                "savings": "pp", "investment_weo": "pp", "population": "pct", "pop_growth": "pp", "age65": "pp",
@@ -1340,8 +1342,11 @@ def main():
     # Global rates table (every tracked economy)
     for e in econ.values():
         I = e["indicators"]
-        if "policy_rate" in I or "long_rate" in I:
+        if "policy_rate" in I or "long_rate" in I or "share_prices" in I:
+            sp = I.get("share_prices")
             markets["global_rates"].append({
+                "stocks": None if not sp or sp.get("annual") else {"chg": sp["chg"], "spark": sp["spark"], "pct10": sp.get("pct10"),
+                                                                    "date": sp["date"], "rel": sp["rel"]},
                 "name": e["name"], "iso3": e["iso3"], "policy": I.get("policy_rate", {}).get("latest"),
                 "policy_src": I.get("policy_rate", {}).get("source"), "long": I.get("long_rate", {}).get("latest"),
                 "real": real_rate_any(e), "real_est": e["math"].get("real_rate") is None and real_rate_any(e) is not None,

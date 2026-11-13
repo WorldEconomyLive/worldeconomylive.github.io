@@ -232,7 +232,7 @@
     const out = {}, maxStale = META.max_stale, fresh = META.fresh;
     for (const [iso3, E] of Object.entries(P.macro)) {
       const e = { name: E.name, iso3, g20: E.g20, indicators: {}, pillars: {} }, series = {};
-      for (const ind of ['gdp', 'inflation', 'unemployment', 'industry', 'long_rate', 'short_rate', 'exports_usd', 'imports_usd']) {
+      for (const ind of ['gdp', 'inflation', 'unemployment', 'industry', 'long_rate', 'short_rate', 'exports_usd', 'imports_usd', 'share_prices']) {
         const cands = (E.ind[ind] || []).map((c) => ({ ...c, cs: cut(c.S, c.rk, d) }));
         let best = null;
         const p = cands.find((c) => c.o === 0);
@@ -251,6 +251,7 @@
           series[ind] = best.annual ? null : s;
           e.indicators[ind] = { latest: last(s), date: iso(lastT(s)), annual: best.annual, year_ago: valueAgo(s, 335), source: best.lab, rel: best.rk,
             chg: change(s, META.ind_kind[ind], best.annual ? 'A' : null), spark: best.annual ? [] : spark(s, q ? 20 : 24, q) };
+          if (ind === 'share_prices' && !best.annual) e.indicators[ind].pct10 = priceStats(s.v).pct10;
         }
       }
       const b = cut(E.BIS, 'bis', d);
@@ -603,8 +604,9 @@
     const comps = Object.fromEntries(Object.entries(SC.w.comps || {}).map(([k, r]) => [k, rleAt(r, di)]).filter(([, v]) => ok(v)));
     for (const e of Object.values(econ)) {
       const I = e.indicators;
-      if (I.policy_rate || I.long_rate) {
-        markets.global_rates.push({ name: e.name, iso3: e.iso3, policy: I.policy_rate?.latest ?? null, policy_src: I.policy_rate?.source, long: I.long_rate?.latest ?? null,
+      if (I.policy_rate || I.long_rate || I.share_prices) {
+        const sp = I.share_prices;
+        markets.global_rates.push({ stocks: !sp || sp.annual ? null : { chg: sp.chg, spark: sp.spark, pct10: sp.pct10 ?? null, date: sp.date, rel: sp.rel }, name: e.name, iso3: e.iso3, policy: I.policy_rate?.latest ?? null, policy_src: I.policy_rate?.source, long: I.long_rate?.latest ?? null,
           real: ok(e.math.real_rate) ? e.math.real_rate : (ok(I.policy_rate?.latest) && ok(I.inflation?.latest) ? I.policy_rate.latest - I.inflation.latest : null),
           real_est: !ok(e.math.real_rate) && ok(I.policy_rate?.latest) && ok(I.inflation?.latest), curve: e.math.curve ?? null, rel: I.policy_rate?.rel, rel_long: I.long_rate?.rel,
           c: { policy: I.policy_rate?.chg, long: I.long_rate?.chg, real: e.mchg.real_rate, curve: e.mchg.curve },
