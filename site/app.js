@@ -1050,11 +1050,12 @@
   const PERSEC = new Set(['scorecard', 'fundamentals', 'trade', 'energy', 'commodities', 'markets', 'people']);
   // when the section links don't fit across the header, they move into a Sections menu
   const nav = document.querySelector('header.bar nav'), btn = document.getElementById('navbtn');
+  // links in a row if they fit; then a tighter row (smaller spacing, update time hidden); only then the Sections menu
   const fit = () => {
-    document.body.classList.remove('navmenu'); nav.classList.remove('open'); btn.setAttribute('aria-expanded', 'false');
-    const gap = parseFloat(getComputedStyle(nav).columnGap) || 0;
-    const need = links.reduce((s, a) => s + a.getBoundingClientRect().width, 0) + gap * (links.length - 1);
-    if (need > nav.clientWidth + 1) document.body.classList.add('navmenu');
+    document.body.classList.remove('navmenu', 'navtight'); nav.classList.remove('open'); btn.setAttribute('aria-expanded', 'false');
+    const fits = () => { const gap = parseFloat(getComputedStyle(nav).columnGap) || 0;
+      return links.reduce((s, a) => s + a.getBoundingClientRect().width, 0) + gap * (links.length - 1) <= nav.clientWidth + 1; };
+    if (!fits()) { document.body.classList.add('navtight'); if (!fits()) { document.body.classList.remove('navtight'); document.body.classList.add('navmenu'); } }
     hdrVar();
   };
   // sections stop just below the header, whatever its height
