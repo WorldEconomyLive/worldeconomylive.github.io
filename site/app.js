@@ -298,24 +298,30 @@
   // ---------------- energy use and electricity by source (Energy section) ----------------
   let MIXK = 'energy';
   function renderMix() {
-    if (!DV || !D || !$('mixtbl')) return;
-    const M = DV.mix?.[MIXK], F = foot(), qq = ($('mq').value || '').trim().toLowerCase();
+    if (!D || !$('mixtbl')) return;
+    const M = DV?.mix?.[MIXK], F = foot(), qq = ($('mq').value || '').trim().toLowerCase(), PWR = D.power || {};
     $('mixsel').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.m === MIXK));
-    if (!M) { $('mixleg').innerHTML = ''; $('mixtbl').innerHTML = '<p class="sub" style="padding:14px">Splits by source fill in after the next automated run.</p>'; $('f-mix').innerHTML = ''; return; }
     const gdp = {}; for (const r of Object.values(D.map || {})) if (ok(r.gdp_usd)) gdp[r.iso3] = r.gdp_usd;
+    const nm = (i) => DV?.names?.[i] || mapName(i);
     const FOS = MIXK === 'energy' ? ['oil', 'gas', 'coal'] : ['coal', 'gas', 'other_fossil'];
-    const rows = Object.keys(M.data).map((i) => ({ i, m: mixPt(MIXK, i) })).filter((r) => r.m && (!qq || (DV.names[r.i] || '').toLowerCase().includes(qq)))
-      .sort((a, b) => (gdp[b.i] ?? -1) - (gdp[a.i] ?? -1) || String(DV.names[a.i]).localeCompare(String(DV.names[b.i])));
-    rows.forEach((r) => F.rel(M.rel, `${r.m.y}-07-01`, 'A', MIXK === 'energy' ? 'Energy use by source' : 'Electricity generation by source', MIXK === 'energy' ? 'U.S. Energy Information Administration' : 'Ember', true));
+    const isos = new Set([...Object.keys(M?.data || {}), ...Object.keys(PWR)]);
+    const rows = [...isos].map((i) => ({ i, m: M ? mixPt(MIXK, i) : null, p: PWR[i] })).filter((r) => (r.m || r.p) && (!qq || String(nm(r.i)).toLowerCase().includes(qq)))
+      .sort((a, b) => (gdp[b.i] ?? -1) - (gdp[a.i] ?? -1) || String(nm(a.i)).localeCompare(String(nm(b.i))));
+    rows.forEach((r) => {
+      if (r.m) F.rel(M.rel, `${r.m.y}-07-01`, 'A', MIXK === 'energy' ? 'Energy use by source' : 'Electricity generation by source', MIXK === 'energy' ? 'U.S. Energy Information Administration' : 'Ember', true);
+      if (r.p) { F.add(`${nm(r.i)} electricity demand`, r.p.chg); F.rel(r.p.rel || 'ember', r.p.date, 'M', 'Electricity demand', 'Ember'); }
+    });
     const fos = (m) => m.order.reduce((a, k, j) => a + (FOS.includes(k) ? m.s[j] : 0), 0);
     const top = (m) => { let j = 0; m.s.forEach((v, n) => { if (v > m.s[j]) j = n; }); return `${MIXLAB[m.order[j]]} ${num(m.s[j], 0)}%`; };
-    $('mixleg').innerHTML = `<div class="mixleg mono small">${M.order.map((k) => `<span class="mixk"><i style="background:${MIXCOL[k]}"></i>${MIXLAB[k]}</span>`).join('')}</div>`;
-    $('mixtbl').innerHTML = rows.length ? table(['Country', 'Split by source', 'Fossil fuels', 'Low-carbon', 'Largest source', 'Year'], rows.map((r) => {
-      const f = fos(r.m);
-      return `<tr class="click" data-iso="${r.i}"><td>${esc(DV.names[r.i] || r.i)}</td><td><div class="mixcell">${mixBar(r.m, 12)}</div></td><td>${num(f, 0)}%</td><td>${num(100 - f, 0)}%</td><td>${top(r.m)}</td><td>${r.m.y}</td></tr>`;
-    })) : `<p class="sub na" style="padding:14px">No country matches.</p>`;
+    $('mixleg').innerHTML = M ? `<div class="mixleg mono small">${M.order.map((k) => `<span class="mixk"><i style="background:${MIXCOL[k]}"></i>${MIXLAB[k]}</span>`).join('')}</div>` : '';
+    const NA_ = '<span class="na">—</span>';
+    $('mixtbl').innerHTML = rows.length ? table(['Country', 'Split by source', 'Fossil', 'Low-carbon', 'Year', 'Power demand', 'Trend'], rows.map((r) => {
+      const f = r.m ? fos(r.m) : null;
+      return `<tr class="click" data-iso="${r.i}"><td>${esc(nm(r.i))}</td><td>${r.m ? `<div class="mixcell" title="${esc(top(r.m))} is the largest source">${mixBar(r.m, 12)}</div>` : NA_}</td><td>${r.m ? num(f, 0) + '%' : NA_}</td><td>${r.m ? num(100 - f, 0) + '%' : NA_}</td><td>${r.m ? r.m.y : NA_}</td>`
+        + `<td>${r.p ? `${num(r.p.twh, 1)} TWh <span class="na mono small">${esc(String(r.p.date).slice(0, 7))}</span>${chg(r.p.chg)}` : NA_}</td><td>${r.p ? spark(r.p.spark, 80, 22) : ''}</td></tr>`;
+    })) : (isos.size ? '<p class="sub na" style="padding:14px">No country matches.</p>' : '<p class="sub" style="padding:14px">Fills in on the next automated run.</p>');
     $('mixtbl').querySelectorAll('tr[data-iso]').forEach((tr) => tr.addEventListener('click', () => openCountry(tr.dataset.iso)));
-    $('f-mix').innerHTML = F.html() + `<div class="foot"><p class="fn">${MIXK === 'energy' ? 'Primary energy consumption as measured by the EIA (quadrillion Btu), split into oil, natural gas, coal, nuclear and renewables; shares computed by this site.' : 'Electricity generation (TWh) by source; low-carbon is nuclear plus renewables; shares computed by this site.'} Latest year each country has (figures more than ${DEV_MAX_AGE} years old are left out). ${D === LIVE ? '' : 'For past dates, a figure for year Y counts as published on July 1 of Y+1. '}Tap a country for its full readout.</p></div>`;
+    $('f-mix').innerHTML = F.html() + `<div class="foot"><p class="fn">${MIXK === 'energy' ? 'Energy use: primary energy consumption as measured by the EIA (quadrillion Btu), split into oil, natural gas, coal, nuclear and renewables.' : 'Electricity: generation (TWh) by source; low-carbon is nuclear plus renewables.'} Shares computed by this site; latest year each country has (figures more than ${DEV_MAX_AGE} years old are left out)${D === LIVE ? '' : '; for past dates, a figure for year Y counts as published on July 1 of Y+1'}. Electricity demand change compares the latest 3 months with the same 3 months ${PI < 3 ? '1 year or more' : PWORD[PI]} earlier (not seasonally adjusted, so shorter periods are not shown). Tap a country for its full readout.</p></div>`;
   }
   $('mixsel')?.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { MIXK = b.dataset.m; renderMix(); }));
   $('mq')?.addEventListener('input', () => renderMix());
@@ -772,12 +778,7 @@
     // energy & transport
     {
       const F = foot();
-      const PW = Object.entries(D.power || {}).map(([iso, v]) => ({ iso, name: mapName(iso), ...v })).sort((a, b) => (b.twh ?? 0) - (a.twh ?? 0));
-      $('power').innerHTML = PW.length ? table(['Country', 'Demand, latest month', 'Trend (3-month y/y)', 'Month'],
-        PW.slice(0, 40).map((r) => { F.add(r.name, r.chg); F.rel(r.rel || 'ember', r.date, 'M', '', 'Ember');
-          return `<tr><td>${esc(r.name)}</td><td>${v1(num(r.twh, 1) + ' TWh', r.chg)}</td><td>${spark(r.spark, 90, 22)}</td><td class="na">${esc(String(r.date).slice(0, 7))}</td></tr>`; }))
-        : pend('Fills in on the next automated run.');
-      $('f-power').innerHTML = F.html() + `<div class="foot"><p class="fn">Change compares demand in the latest 3 months with the same 3 months ${PI < 3 ? '1 year or more' : PWORD[PI]} earlier (not seasonally adjusted, so shorter periods are not shown).</p></div>`;
+      renderMix();   // energy by country: split by source + electricity demand in one table
       const G = foot();
       const TR = [...(D.transport || []).map((r) => ({ country: r.country || 'United States', mode: r.name, latest: r.latest, unit: '', chg: r.chg, spark: r.spark, date: r.date, rel: r.rel || 'bts' })),
         ...(D.freight || []).sort((a, b) => a.mode.localeCompare(b.mode) || (b.latest ?? 0) - (a.latest ?? 0))];
