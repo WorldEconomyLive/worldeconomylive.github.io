@@ -337,6 +337,27 @@ def _weo_label_now():
     return f"WEO October {t.year - 1}"
 
 
+DM_BILLIONS = {"NGDPD", "PPPGDP", "NGDP"}   # WEO subjects DataMapper (and the registry scales) report in billions
+_MULT_WORDS = {"units": 0, "thousands": 3, "millions": 6, "billions": 9, "trillions": 12}
+
+
+def _sdmx_mult(df):
+    """Per-row multiplier from an SDMX unit-multiplier / scale column (exponent or word); 1 when absent."""
+    col = next((c for c in df.columns if c.upper() in ("UNIT_MULT", "SCALE", "UNIT_MULTIPLIER")), None)
+    if col is None:
+        return 1.0
+
+    def one(x):
+        x = str(x).strip().lower()
+        if x in _MULT_WORDS:
+            return 10.0 ** _MULT_WORDS[x]
+        try:
+            return 10.0 ** int(float(x))
+        except ValueError:
+            return 1.0
+    return df[col].map(one).astype(float)
+
+
 def weo_sdmx(subj):
     """IMF data portal (SDMX), the WEO's home since October 2025: COUNTRY.INDICATOR.FREQUENCY, all countries."""
     tries = [
@@ -353,6 +374,9 @@ def weo_sdmx(subj):
             cc = next(c for c in df.columns if c.upper() in ("COUNTRY", "REF_AREA") or c.upper().startswith("COUNTRY"))
             tc = next(c for c in df.columns if c.upper() == "TIME_PERIOD")
             vc = next(c for c in df.columns if c.upper() == "OBS_VALUE")
+            df[vc] = pd.to_numeric(df[vc], errors="coerce") * _sdmx_mult(df)
+            if subj in DM_BILLIONS:                 # the portal sends full units; DataMapper (and registry scales) use billions
+                df[vc] = df[vc] / 1e9
             out = {}
             for iso, g in df.groupby(cc):
                 iso = ALIAS3.get(str(iso), str(iso))
@@ -760,6 +784,130 @@ def ember_monthly() -> pd.DataFrame:
         except Exception as e:
             last = (str(e) or type(e).__name__)[:80]
     raise RuntimeError(last or "ember unavailable")
+
+
+# ---------------- Electricity by source, yearly (Ember, CC BY 4.0) ----------------
+EMBER_YEARLY_URLS = [
+    "https://files.ember-energy.org/public-downloads/generation/outputs/release_generation_yearly_global.csv",
+    "https://files.ember-energy.org/public-downloads/yearly_full_release_long_format.csv",
+    "https://storage.googleapis.com/emb-prod-bkt-publicdata/public-downloads/yearly_full_release_long_format.csv",
+]
+ELEC_SOURCES = {"coal": "coal", "gas": "gas", "other fossil": "other_fossil", "nuclear": "nuclear", "hydro": "hydro",
+                "wind": "wind", "solar": "solar", "bioenergy": "bio", "other renewables": "other_ren"}
+
+
+def ember_yearly() -> pd.DataFrame:
+    """Electricity generation by source and year. Columns: iso3, year, source (ELEC_SOURCES values), twh.
+    Handles Ember's 2026 wide format (metrics as columns) and the older long format (Variable/Unit/Value)."""
+    last = None
+    for u in EMBER_YEARLY_URLS:
+        try:
+            resp = _get(u, timeout=240)
+            df = pd.read_csv(io.BytesIO(resp.content), low_memory=False)
+            cols = {str(c).lower().strip(): c for c in df.columns}
+            year = cols.get("year") or _col(cols, "date", exclude=("change",))
+            src = _col(cols, "electricity source", "variable", exclude=("aggregat",))
+            gen = _col(cols, "generation (twh)", exclude=("change", "share"))
+            val = gen or _col(cols, "value", exclude=("change",))
+            if not (year and src and val):
+                raise RuntimeError(f"columns: {list(df.columns)[:8]}")
+            x = df
+            unit = cols.get("unit")
+            if unit and not gen:
+                x = x[x[unit].astype(str).str.upper().str.strip() == "TWH"]
+            name = x[src].astype(str).str.strip().str.lower()
+            x = x[name.isin(ELEC_SOURCES)]
+            iso = _col(cols, "iso 3", "iso3", "country code")
+            codes = x[iso] if iso else x[_col(cols, "area", "country", exclude=("type", "member"))].map(_area_iso3)
+            yr = pd.to_numeric(x[year].astype(str).str[:4], errors="coerce")
+            out = pd.DataFrame({"iso3": codes.values, "year": yr.values, "source": x[src].astype(str).str.strip().str.lower().map(ELEC_SOURCES).values,
+                                "twh": pd.to_numeric(x[val], errors="coerce").values}).dropna()
+            out = out[out.iso3.astype(str).str.len() == 3]
+            out["year"] = out["year"].astype(int)
+            if out.iso3.nunique() < 50:
+                raise RuntimeError(f"only {out.iso3.nunique()} countries")
+            set_rel("ember_yearly", "Ember, Yearly Electricity Data", resp.headers.get("Last-Modified"), label="Yearly Electricity Data")
+            return out.groupby(["iso3", "year", "source"], as_index=False)["twh"].sum()
+        except Exception as e:
+            last = (str(e) or type(e).__name__)[:100]
+    raise RuntimeError(last or "ember yearly unavailable")
+
+
+# ---------------- Energy consumption by fuel (U.S. EIA International Energy Statistics, public domain) ----------------
+EIA_INTL_URLS = ["https://api.eia.gov/bulk/INTL.zip", "http://api.eia.gov/bulk/INTL.zip"]
+ENERGY_FUELS = ("oil", "gas", "coal", "nuclear", "renewables")
+
+
+def _eia_fuel(name):
+    n = str(name).lower().split(",")[0].strip()
+    if not n.endswith("consumption") or "per capita" in n or "electricity" in n or "intensity" in n:
+        return None
+    n = n[: -len("consumption")].strip()
+    if n in ("total energy", "primary energy", "total primary energy"):
+        return "total"
+    if n.startswith("coal"):
+        return "coal"
+    if "natural gas" in n:
+        return "gas"
+    if n.startswith("petroleum") or n.startswith("crude oil") or n.startswith("oil"):
+        return "oil"
+    if n.startswith("nuclear"):
+        return "nuclear"
+    if n.startswith("renewables") or n.startswith("renewable"):
+        return "renewables"
+    if n.startswith("hydroelectric") or n.startswith("hydro"):
+        return "_hydro"
+    if n.startswith("non-hydroelectric renewables") or n.startswith("other renewables"):
+        return "_nonhydro"
+    return None
+
+
+def eia_energy() -> pd.DataFrame:
+    """Primary energy consumption by fuel, quadrillion Btu. Columns: iso3, year, fuel, qbtu.
+    From the EIA bulk file: series INTL.{product}-{activity}-{ISO3}-{unit}.A, activity 2 = consumption, unit QBTU."""
+    import zipfile
+    last = None
+    for u in EIA_INTL_URLS:
+        try:
+            resp = _get(u, timeout=300, tries=2)
+            z = zipfile.ZipFile(io.BytesIO(resp.content))
+            rows = []
+            with z.open(z.namelist()[0]) as f:
+                for line in io.TextIOWrapper(f, encoding="utf-8", errors="replace"):
+                    if '"series_id"' not in line or "QBTU" not in line:
+                        continue
+                    o = json.loads(line)
+                    sid = str(o.get("series_id", ""))
+                    if not (sid.startswith("INTL.") and sid.endswith(".A")):
+                        continue
+                    parts = sid[5:-2].split("-")
+                    if len(parts) != 4 or parts[1] != "2" or parts[3] != "QBTU" or len(parts[2]) != 3:
+                        continue
+                    fuel = _eia_fuel(o.get("name", ""))
+                    if not fuel:
+                        continue
+                    for y, v in o.get("data") or []:
+                        try:
+                            rows.append((parts[2], int(str(y)[:4]), fuel, float(v)))
+                        except (TypeError, ValueError):
+                            pass
+            df = pd.DataFrame(rows, columns=["iso3", "year", "fuel", "qbtu"]).drop_duplicates(["iso3", "year", "fuel"])
+            if df.iso3.nunique() < 50:
+                raise RuntimeError(f"only {df.iso3.nunique()} countries")
+            w = df.pivot_table(index=["iso3", "year"], columns="fuel", values="qbtu", aggfunc="first")
+            if "renewables" not in w.columns:
+                w["renewables"] = w.get("_hydro", 0).fillna(0) + w.get("_nonhydro", 0).fillna(0)
+            else:
+                alt = w.get("_hydro", pd.Series(0, index=w.index)).fillna(0) + w.get("_nonhydro", pd.Series(0, index=w.index)).fillna(0)
+                w["renewables"] = w["renewables"].fillna(alt.where(alt > 0))
+            keep = [c for c in ENERGY_FUELS + ("total",) if c in w.columns]
+            out = w[keep].reset_index().melt(id_vars=["iso3", "year"], var_name="fuel", value_name="qbtu").dropna()
+            set_rel("eia_intl", "U.S. Energy Information Administration, International Energy Statistics", resp.headers.get("Last-Modified"),
+                    label="International Energy Statistics")
+            return out
+        except Exception as e:
+            last = (str(e) or type(e).__name__)[:100]
+    raise RuntimeError(last or "EIA unavailable")
 
 
 # ---------------- Our World in Data grapher CSVs (OWID's work CC BY 4.0; each indicator keeps its original licence) ----------------

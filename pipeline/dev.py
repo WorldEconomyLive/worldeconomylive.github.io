@@ -39,11 +39,44 @@ DEV = {
     "co2_pc":       ("owid", "co-emissions-per-capita", "CO₂ per person", "tonnes", -1, 2,
                      "Global Carbon Project, Global Carbon Budget, CC BY 4.0 – with major processing by Our World in Data."),
     "clean_elec":   ("ember", "clean", "Low-carbon electricity", "% of generation", 1, 1,
-                     "Ember, Monthly Electricity Data, CC BY 4.0: renewables and nuclear as a share of generation, summed over each complete year by this site."),
+                     "Ember, Yearly Electricity Data (Monthly Electricity Data summed over complete years where the yearly file is unavailable), CC BY 4.0: renewables and nuclear as a share of generation."),
+    "fossil_energy": ("eia", "fossil", "Fossil fuels, share of energy use", "% of primary energy", 0, 1,
+                      "U.S. Energy Information Administration, International Energy Statistics (public domain): coal, oil and gas as a share of primary energy consumption, computed by this site."),
     "warming":      ("owid", "contribution-temp-rise-degrees", "Contribution to global warming", "°C since 1850", -1, 3,
                      "Jones et al., National contributions to climate change, CC BY 4.0 – with major processing by Our World in Data."),
 }
 SINCE = 1960
+
+
+ENERGY_ORDER = ["oil", "gas", "coal", "nuclear", "renewables"]
+ELEC_ORDER = ["coal", "gas", "other_fossil", "nuclear", "hydro", "wind", "solar", "bio", "other_ren"]
+MIX = {}      # filled by _mixes(): {"energy": DataFrame(iso3, year, fuel, qbtu), "elec": DataFrame(iso3, year, source, twh)}
+
+
+def _mixes():
+    for k, fn in (("energy", S.eia_energy), ("elec", S.ember_yearly)):
+        try:
+            MIX[k] = fn()
+            S.log(f"dev.mix_{k}", True, f"{MIX[k].iso3.nunique()} countries")
+        except Exception as e:
+            S.log(f"dev.mix_{k}", False, e)
+
+
+def _shares(df, key, cat, order):
+    """{iso3: [y0, [[share % per category in order] | None per year]]} from a long frame."""
+    w = df.pivot_table(index=["iso3", "year"], columns=cat, values=key, aggfunc="sum").reindex(columns=order).fillna(0)
+    tot = w.sum(axis=1)
+    w = w[tot > 0].div(tot[tot > 0], axis=0) * 100
+    out = {}
+    for iso3, g in w.groupby(level=0):
+        g = g.droplevel(0).sort_index()
+        g = g[g.index >= SINCE]
+        if not len(g):
+            continue
+        y0, y1 = int(g.index[0]), int(g.index[-1])
+        by = {int(y): [round(float(x), 1) for x in r] for y, r in zip(g.index, g.values)}
+        out[iso3] = [y0, [by.get(y) for y in range(y0, y1 + 1)]]
+    return out
 
 
 def _fetch(key):
@@ -52,6 +85,21 @@ def _fetch(key):
         return S.worldbank_all(code, since=SINCE), f"wb:{code}"
     if src == "owid":
         return S.owid_grapher(code), f"owid:{code}"
+    if src == "eia":
+        e = MIX.get("energy")
+        if e is None:
+            raise RuntimeError("EIA energy data not available")
+        w = e[e.fuel.isin(ENERGY_ORDER)].pivot_table(index=["iso3", "year"], columns="fuel", values="qbtu", aggfunc="sum").fillna(0)
+        tot = w.sum(axis=1)
+        fos = w.reindex(columns=["oil", "gas", "coal"]).fillna(0).sum(axis=1)
+        v = (fos[tot > 0] / tot[tot > 0] * 100).rename("value").reset_index()
+        return v, "eia_intl"
+    y = MIX.get("elec")
+    if y is not None:                                # Ember yearly: ~200 countries
+        w = y.pivot_table(index=["iso3", "year"], columns="source", values="twh", aggfunc="sum").fillna(0)
+        tot = w.sum(axis=1)
+        clean = w.reindex(columns=["nuclear", "hydro", "wind", "solar", "bio", "other_ren"]).fillna(0).sum(axis=1)
+        return (clean[tot > 0] / tot[tot > 0] * 100).rename("value").reset_index(), "ember_yearly"
     df = S.EMBER_CLEAN.get("df")
     if df is None:
         raise RuntimeError("Ember clean share not available")
@@ -61,6 +109,7 @@ def _fetch(key):
 def build(names):
     """names: {iso3: display name} for every map country. Returns the dev.json object."""
     data, rel = {}, {}
+    _mixes()
     with ThreadPoolExecutor(4) as ex:
         fut = {k: ex.submit(_fetch, k) for k in DEV}
     for k, f in fut.items():
@@ -78,5 +127,15 @@ def build(names):
             S.log(f"dev.{k}", False, e)
     keys = {k: {"label": v[2], "unit": v[3], "better": v[4], "dec": v[5], "credit": v[6], "rel": rel.get(k),
                 "src": v[0]} for k, v in DEV.items() if k in rel}
-    return {"keys": keys, "data": data, "names": {i: names[i] for i in data},
-            "rel": {rk: S.REL.get(rk) for rk in rel.values() if S.REL.get(rk)}}
+    mix, mix_rel = {}, {}
+    if MIX.get("energy") is not None:
+        e = MIX["energy"]
+        mix["energy"] = {"order": ENERGY_ORDER, "rel": "eia_intl", "data": {i: v for i, v in _shares(e[e.fuel.isin(ENERGY_ORDER)], "qbtu", "fuel", ENERGY_ORDER).items() if i in names}}
+        mix_rel["eia_intl"] = S.REL.get("eia_intl")
+    if MIX.get("elec") is not None:
+        mix["elec"] = {"order": ELEC_ORDER, "rel": "ember_yearly", "data": {i: v for i, v in _shares(MIX["elec"], "twh", "source", ELEC_ORDER).items() if i in names}}
+        mix_rel["ember_yearly"] = S.REL.get("ember_yearly")
+    allrel = {rk: S.REL.get(rk) for rk in rel.values() if S.REL.get(rk)}
+    allrel.update({k: v for k, v in mix_rel.items() if v})
+    return {"keys": keys, "data": data, "names": {i: names[i] for i in set(data) | {i for m in mix.values() for i in m["data"]}},
+            "mix": mix, "rel": allrel}

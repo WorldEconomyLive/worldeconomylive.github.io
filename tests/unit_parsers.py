@@ -180,3 +180,45 @@ y0 = RUN.TODAY.year
 sr = pd.Series([1.0] * 20 + [9.0], index=pd.to_datetime([f"{y}-07-01" for y in range(y0 - 20, y0 + 1)]))
 assert RUN.done_years(sr).index[-1].year == y0 - 1
 print("kosovo, headline, completed years ok")
+
+# IMF data portal sends GDP in US$ (not billions): converted to the DataMapper convention (billions)
+def sdmx_gdp(u, **k):
+    if "datamapper" in u:
+        raise RuntimeError("HTTP 403")
+    lines = ["DATAFLOW,COUNTRY,INDICATOR,FREQUENCY,TIME_PERIOD,OBS_VALUE"] + [f"IMF.RES:WEO,{c},NGDPD,A,2025,{v}" for c, v in [("USA", 30861300000000), ("COD", 122280664000)] + [(f"X{i:02d}", 1e11) for i in range(60)]]
+    return types.SimpleNamespace(headers={}, text="\n".join(lines))
+S._get = sdmx_gdp
+S.REL.pop("weo", None); S._WEO_FAIL.clear(); S._WEO_OK.clear()
+d, rel = S.weo_all("NGDPD.us_dollars", ["WEO:latest"])
+assert abs(d["USA"].iloc[-1] - 30861.3) < 1e-6 and abs(d["COD"].iloc[-1] - 122.280664) < 1e-9, (d["USA"], d["COD"])
+print("imf portal gdp units ok")
+
+# EIA bulk INTL: consumption (activity 2) in quad Btu, split by fuel; production and per-capita series ignored
+import io, json as _json, zipfile  # noqa: E402
+lines = ['{"category_id":"1","name":"cat"}']
+for c in ["USA"] + [f"X{i:02d}" for i in range(60)]:
+    for prod, nm, v in (("44", "Total energy consumption", 100), ("5", "Petroleum and other liquids consumption", 36), ("26", "Dry natural gas consumption", 33),
+                        ("7", "Coal consumption", 10), ("27", "Nuclear consumption", 8), ("29", "Renewables and other consumption", 13)):
+        lines.append(_json.dumps({"series_id": f"INTL.{prod}-2-{c}-QBTU.A", "name": f"{nm}, {c}, Annual", "units": "quadrillion Btu", "data": [["2023", v], ["2022", v]]}))
+    lines.append(_json.dumps({"series_id": f"INTL.44-1-{c}-QBTU.A", "name": f"Total energy production, {c}, Annual", "data": [["2023", 999]]}))
+    lines.append(_json.dumps({"series_id": f"INTL.44-2-{c}-MBTUPP.A", "name": f"Total energy consumption per capita, {c}, Annual", "data": [["2023", 999]]}))
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    z.writestr("INTL.txt", "\n".join(lines))
+S._get = lambda u, **k: types.SimpleNamespace(headers={"Last-Modified": "Thu, 05 Nov 2026 10:00:00 GMT"}, content=buf.getvalue())
+e = S.eia_energy()
+u = e[(e.iso3 == "USA") & (e.year == 2023)].set_index("fuel").qbtu
+assert u.to_dict() == {"oil": 36, "gas": 33, "coal": 10, "nuclear": 8, "renewables": 13, "total": 100}, u.to_dict()
+print("eia energy ok")
+
+# Ember yearly (2026 wide format): generation by source, aggregates dropped
+rows = []
+for c in ["USA"] + [f"X{i:02d}" for i in range(60)]:
+    for srcname, twh, agg in (("Coal", 600, False), ("Gas", 1800, False), ("Nuclear", 780, False), ("Wind", 450, False), ("Solar", 300, False), ("Clean", 1530, True), ("Total generation", 3930, True)):
+        rows.append({"Area": c, "ISO 3 code": c, "Year": 2025, "Electricity source": srcname, "Is aggregated source": agg, "Generation (TWh)": twh, "Share of generation (%)": 0})
+csv = pd.DataFrame(rows).to_csv(index=False).encode()
+S._get = lambda u, **k: types.SimpleNamespace(headers={}, content=csv)
+y = S.ember_yearly()
+u = y[y.iso3 == "USA"].set_index("source").twh
+assert u.to_dict() == {"coal": 600, "gas": 1800, "nuclear": 780, "solar": 300, "wind": 450}, u.to_dict()
+print("ember yearly ok")

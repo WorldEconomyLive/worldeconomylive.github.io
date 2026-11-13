@@ -7,7 +7,7 @@
   const cls = (v, goodUp = true) => (!ok(v) || v === 0 ? '' : (v > 0) === goodUp ? 'pos' : 'neg');
   const big = (v) => !ok(v) ? '—' : Math.abs(v) >= 1e12 ? (v / 1e12).toFixed(2) + 'tn' : Math.abs(v) >= 1e9 ? (v / 1e9).toFixed(1) + 'bn' : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + 'm' : Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : num(v);
   const usd = (v) => !ok(v) ? '—' : (v < 0 ? '−$' : '$') + big(Math.abs(v));
-  const bn = (v) => !ok(v) ? '—' : (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(1) + 'bn';
+  const bn = (v) => !ok(v) ? '—' : (v < 0 ? '−$' : '$') + (Math.abs(v) >= 1000 ? (Math.abs(v) / 1000).toFixed(2) + 'tn' : Math.abs(v).toFixed(1) + 'bn');
   const sd = (v) => ok(v) ? `<span class="sd">${v >= 0 ? 'surplus' : 'deficit'}</span>` : '';
   const POS = [62, 230, 196], NEG = [255, 77, 109], MID = [28, 31, 36];
   function div(v, cap) {
@@ -109,6 +109,8 @@
     if (k === 'ecb') return ['ecb', 'Source: ECB statistics (euro foreign exchange reference rates). Converted to US-dollar pairs and percent changes by this site.'];
     if (k === 'pink') return ['pink', `Source: World Bank, Commodity Price Data (The Pink Sheet), CC BY 4.0. Changes computed by this site; no endorsement by the World Bank is implied.`];
     if (k.startsWith('wb:')) return ['wb', `Source: World Bank, World Development Indicators, CC BY 4.0 (${lnk('data.worldbank.org')}). Changes computed by this site; no endorsement by the World Bank is implied.`];
+    if (k === 'eia_intl') return ['eia', `Source: U.S. Energy Information Administration, International Energy Statistics (${lnk('www.eia.gov/international/data/world')}), a U.S. government work in the public domain. Shares computed by this site.`];
+    if (k === 'ember_yearly') return ['ember_y', `Source: Ember, Yearly Electricity Data, CC BY 4.0 (${lnk('ember-energy.org')}). Shares computed by this site.`];
     if (k === 'ember') return ['ember', `Source: Ember, Monthly Electricity Data, CC BY 4.0 (${lnk('ember-energy.org')}). 3-month sums and changes computed by this site.`];
     if (k === 'statcan') return ['statcan', `Adapted from Statistics Canada, Table 23-10-0216-01, Railway carloadings, ${esc(hi)}. This does not constitute an endorsement by Statistics Canada of this product.`];
     if (k === 'nyfed') return ['nyfed', NYFED];
@@ -206,7 +208,8 @@
   };
   // ---------------- development & environment (slow annual indicators) ----------------
   let DV = null, DKEY = 'rd', DSC = null;
-  const DORDER = ['rd', 'poverty', 'gdp_pc_long', 'productivity', 'hdi', 'child_mort', 'school', 'undernourish', 'labor_part', 'female_lab', 'co2_pc', 'clean_elec', 'warming'];
+  const DORDER = ['rd', 'poverty', 'gdp_pc_long', 'productivity', 'hdi', 'child_mort', 'school', 'undernourish', 'labor_part', 'female_lab', 'co2_pc', 'fossil_energy', 'clean_elec', 'warming'];
+  const DEV_MAX_AGE = 15;   // years: older figures are not shown as a country's latest
   async function loadDev() {
     if (DV) return DV;
     try { const r = await fetch('data/dev.json', { cache: 'no-cache' }); DV = r.ok ? await r.json() : null; } catch (e) { DV = null; }
@@ -215,15 +218,36 @@
   }
   // past dates: an annual figure for year Y counts as published on July 1 of Y+1
   const devCut = () => { if (D === LIVE) return 9999; const v = String(D.asof_view || D.asof?.today || ''); const y = +v.slice(0, 4); return v.slice(5, 10) >= '07-01' ? y - 1 : y - 2; };
+  const devRef = () => (D === LIVE ? viewYear() : devCut() + 1);
   const devPt = (iso, k, upto) => {
     const a = DV?.data?.[iso]?.[k]; if (!a) return null;
     const cut = Math.min(upto ?? 9999, devCut());
-    for (let j = Math.min(a[1].length - 1, cut - a[0]); j >= 0; j--) if (ok(a[1][j])) return { v: a[1][j], y: a[0] + j };
+    for (let j = Math.min(a[1].length - 1, cut - a[0]); j >= 0; j--) if (ok(a[1][j])) return upto === undefined && a[0] + j < devRef() - DEV_MAX_AGE ? null : { v: a[1][j], y: a[0] + j };
     return null;
   };
+  // energy and electricity by source (latest year within the age limit)
+  const MIXCOL = { oil: '#c9733f', gas: '#e0a94a', coal: '#7a6a5c', other_fossil: '#9b5f45', nuclear: '#a78bfa', renewables: '#3ee6c4', hydro: '#4aa3e0', wind: '#7dd3fc', solar: '#f5d76e', bio: '#7bc47f', other_ren: '#3ee6c4' };
+  const MIXLAB = { oil: 'Oil', gas: 'Gas', coal: 'Coal', other_fossil: 'Other fossil', nuclear: 'Nuclear', renewables: 'Renewables', hydro: 'Hydro', wind: 'Wind', solar: 'Solar', bio: 'Bioenergy', other_ren: 'Other renewables' };
+  const mixPt = (kind, iso, year) => {
+    const M = DV?.mix?.[kind], a = M?.data?.[iso]; if (!a) return null;
+    const cut = Math.min(year ?? 9999, devCut());
+    for (let j = Math.min(a[1].length - 1, cut - a[0]); j >= 0; j--) if (a[1][j]) return a[0] + j < devRef() - DEV_MAX_AGE ? null : { y: a[0] + j, s: a[1][j], order: M.order };
+    return null;
+  };
+  const mixBar = (m, h = 12) => `<div class="mixbar" style="height:${h}px">${m.order.map((k, i) => (m.s[i] > 0 ? `<span style="width:${m.s[i]}%;background:${MIXCOL[k]}" title="${MIXLAB[k]} ${num(m.s[i], 1)}%"></span>` : '')).join('')}</div>`;
+  const mixLegend = (m) => m.order.map((k, i) => [k, m.s[i]]).filter(([, v]) => v >= 0.5).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="mixk"><i style="background:${MIXCOL[k]}"></i>${MIXLAB[k]} ${num(v, v < 10 ? 1 : 0)}%</span>`).join('');
+  function mixBlocks(iso, F) {
+    let out = '';
+    for (const [kind, title] of [['energy', 'Energy use by source'], ['elec', 'Electricity generation by source']]) {
+      const m = mixPt(kind, iso); if (!m) continue;
+      const rk = DV.mix[kind].rel; F.rel(rk, `${m.y}-07-01`, 'A', title, kind === 'energy' ? 'U.S. EIA' : 'Ember');
+      out += `<h3>${title} <span class="na mono small">${m.y}</span></h3>${mixBar(m)}<div class="mixleg mono small">${mixLegend(m)}</div>`;
+    }
+    return out;
+  }
   const devAgo = (iso, k, x) => { const a = x && devPt(iso, k, x.y - 10); return a && a.y >= x.y - 12 ? a : null; };
-  const devFmt = (k, v) => { const K = DV?.keys?.[k]; if (!K || !ok(v)) return '—'; if (K.unit.startsWith('int.-$')) return '$' + big(v); return num(v, K.dec) + (K.unit.startsWith('%') ? '%' : ''); };
-  const devSrcName = (K) => (K.src === 'owid' ? 'Our World in Data' : K.src === 'ember' ? 'Ember' : 'World Bank');
+  const devFmt = (k, v) => { const K = DV?.keys?.[k]; if (!K || !ok(v)) return '—'; if (K.unit.startsWith('int.-$')) return '$' + big(v); if (k === 'warming' && Math.abs(v) < 0.01) return v === 0 ? '0' : Number(v.toPrecision(2)).toString(); return num(v, K.dec) + (K.unit.startsWith('%') ? '%' : ''); };
+  const devSrcName = (K) => (K.src === 'owid' ? 'Our World in Data' : K.src === 'ember' ? 'Ember' : K.src === 'eia' ? 'U.S. Energy Information Administration' : 'World Bank');
   const devDelta = (k, x, a) => {
     if (!a) return '';
     const K = DV.keys[k], d = x.v - a.v, g = K.better || 0;
@@ -262,15 +286,42 @@
       .filter((r) => !qq || (DV.names[r.i] || '').toLowerCase().includes(qq)).sort((a, b) => b.x.v - a.x.v);
     rows.forEach((r) => F.rel(K.rel, `${r.x.y}-07-01`, 'A', K.label, devSrcName(K), true));
     const trend = (i) => { const a = DV.data[i][DKEY], c = devCut(), p = []; a[1].forEach((v, j) => { if (ok(v) && a[0] + j <= c) p.push([a[0] + j, v]); }); return spark(p, 110, 22); };
-    $('devtbl').innerHTML = rows.length ? table(['#', 'Country', K.label, 'Year', 'About 10 years earlier', 'Change', 'Trend'], rows.map((r, n) =>
-      `<tr class="click" data-iso="${r.i}"><td class="na">${n + 1}</td><td>${esc(DV.names[r.i] || r.i)}</td><td>${devFmt(DKEY, r.x.v)}</td><td>${r.x.y}</td><td>${r.a ? `${devFmt(DKEY, r.a.v)} <span class="na">(${r.a.y})</span>` : '<span class="na">—</span>'}</td><td>${devDelta(DKEY, r.x, r.a) || '<span class="na">n/a</span>'}</td><td>${trend(r.i)}</td></tr>`))
+    const mk = null;   // splits by source live in the Energy section
+    if (mk && DV.mix?.[mk]) rows.forEach((r) => { const m = mixPt(mk, r.i, r.x.y); if (m) F.rel(DV.mix[mk].rel, `${m.y}-07-01`, 'A', mk === 'energy' ? 'Energy use by source' : 'Electricity by source', mk === 'energy' ? 'U.S. EIA' : 'Ember', true); });
+    $('devtbl').innerHTML = rows.length ? table(['#', 'Country', K.label, 'Year', 'About 10 years earlier', 'Change', mk ? 'Split by source' : 'Trend'], rows.map((r, n) =>
+      `<tr class="click" data-iso="${r.i}"><td class="na">${n + 1}</td><td>${esc(DV.names[r.i] || r.i)}</td><td>${devFmt(DKEY, r.x.v)}</td><td>${r.x.y}</td><td>${r.a ? `${devFmt(DKEY, r.a.v)} <span class="na">(${r.a.y})</span>` : '<span class="na">—</span>'}</td><td>${devDelta(DKEY, r.x, r.a) || '<span class="na">n/a</span>'}</td><td>${mk ? (() => { const m = mixPt(mk, r.i, r.x.y); return m ? `<div class="mixcell">${mixBar(m, 10)}</div>` : '<span class="na">—</span>'; })() : trend(r.i)}</td></tr>`))
       : `<p class="sub na" style="padding:14px">n/a — no figures published for this indicator ${D === LIVE ? 'yet' : 'on or before ' + mdy(D.asof_view || D.asof?.today)}.</p>`;
     $('devtbl').querySelectorAll('tr[data-iso]').forEach((tr) => tr.addEventListener('click', () => openCountry(tr.dataset.iso)));
-    $('f-dev').innerHTML = F.html() + `<div class="foot"><p class="fn">Change: percentage points for shares and rates; percent for income, productivity and emissions. ${D === LIVE ? '' : 'For past dates, a figure for year Y counts as published on July 1 of Y+1. '}Ranked by the latest year each country has; years differ between countries.</p></div>`;
+    const legendRow = mk && DV.mix?.[mk] ? `<div class="mixleg mono small">${DV.mix[mk].order.map((k) => `<span class="mixk"><i style="background:${MIXCOL[k]}"></i>${MIXLAB[k]}</span>`).join('')}</div>` : '';
+    $('f-dev').innerHTML = legendRow + F.html() + `<div class="foot"><p class="fn">Change: percentage points for shares and rates; percent for income, productivity and emissions. ${D === LIVE ? '' : 'For past dates, a figure for year Y counts as published on July 1 of Y+1. '}Ranked by the latest year each country has (figures more than ${DEV_MAX_AGE} years old are left out); years differ between countries.${mk === 'energy' ? ' Energy use is primary energy consumption as measured by the EIA (quadrillion Btu), split by fuel.' : ''}</p></div>`;
   }
+  // ---------------- energy use and electricity by source (Energy section) ----------------
+  let MIXK = 'energy';
+  function renderMix() {
+    if (!DV || !D || !$('mixtbl')) return;
+    const M = DV.mix?.[MIXK], F = foot(), qq = ($('mq').value || '').trim().toLowerCase();
+    $('mixsel').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.m === MIXK));
+    if (!M) { $('mixleg').innerHTML = ''; $('mixtbl').innerHTML = '<p class="sub" style="padding:14px">Splits by source fill in after the next automated run.</p>'; $('f-mix').innerHTML = ''; return; }
+    const gdp = {}; for (const r of Object.values(D.map || {})) if (ok(r.gdp_usd)) gdp[r.iso3] = r.gdp_usd;
+    const FOS = MIXK === 'energy' ? ['oil', 'gas', 'coal'] : ['coal', 'gas', 'other_fossil'];
+    const rows = Object.keys(M.data).map((i) => ({ i, m: mixPt(MIXK, i) })).filter((r) => r.m && (!qq || (DV.names[r.i] || '').toLowerCase().includes(qq)))
+      .sort((a, b) => (gdp[b.i] ?? -1) - (gdp[a.i] ?? -1) || String(DV.names[a.i]).localeCompare(String(DV.names[b.i])));
+    rows.forEach((r) => F.rel(M.rel, `${r.m.y}-07-01`, 'A', MIXK === 'energy' ? 'Energy use by source' : 'Electricity generation by source', MIXK === 'energy' ? 'U.S. Energy Information Administration' : 'Ember', true));
+    const fos = (m) => m.order.reduce((a, k, j) => a + (FOS.includes(k) ? m.s[j] : 0), 0);
+    const top = (m) => { let j = 0; m.s.forEach((v, n) => { if (v > m.s[j]) j = n; }); return `${MIXLAB[m.order[j]]} ${num(m.s[j], 0)}%`; };
+    $('mixleg').innerHTML = `<div class="mixleg mono small">${M.order.map((k) => `<span class="mixk"><i style="background:${MIXCOL[k]}"></i>${MIXLAB[k]}</span>`).join('')}</div>`;
+    $('mixtbl').innerHTML = rows.length ? table(['Country', 'Split by source', 'Fossil fuels', 'Low-carbon', 'Largest source', 'Year'], rows.map((r) => {
+      const f = fos(r.m);
+      return `<tr class="click" data-iso="${r.i}"><td>${esc(DV.names[r.i] || r.i)}</td><td><div class="mixcell">${mixBar(r.m, 12)}</div></td><td>${num(f, 0)}%</td><td>${num(100 - f, 0)}%</td><td>${top(r.m)}</td><td>${r.m.y}</td></tr>`;
+    })) : `<p class="sub na" style="padding:14px">No country matches.</p>`;
+    $('mixtbl').querySelectorAll('tr[data-iso]').forEach((tr) => tr.addEventListener('click', () => openCountry(tr.dataset.iso)));
+    $('f-mix').innerHTML = F.html() + `<div class="foot"><p class="fn">${MIXK === 'energy' ? 'Primary energy consumption as measured by the EIA (quadrillion Btu), split into oil, natural gas, coal, nuclear and renewables; shares computed by this site.' : 'Electricity generation (TWh) by source; low-carbon is nuclear plus renewables; shares computed by this site.'} Latest year each country has (figures more than ${DEV_MAX_AGE} years old are left out). ${D === LIVE ? '' : 'For past dates, a figure for year Y counts as published on July 1 of Y+1. '}Tap a country for its full readout.</p></div>`;
+  }
+  $('mixsel')?.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { MIXK = b.dataset.m; renderMix(); }));
+  $('mq')?.addEventListener('input', () => renderMix());
   $('dq')?.addEventListener('input', () => renderDev());
   $('devmap')?.addEventListener('click', () => { layer = 'dev'; document.querySelectorAll('#layers button').forEach((b) => b.classList.toggle('on', b.dataset.l === 'dev')); DSC = null; paint(); $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
-  loadDev().then(() => { if (!D) return; renderDev(); if (LAYERS[layer]?.dev) paint(); try { if (openIdx !== null) showDetail(openIdx); } catch (e) { /* economies not set up yet */ } });
+  loadDev().then(() => { if (!D) return; renderDev(); renderMix(); if (LAYERS[layer]?.dev) paint(); try { if (openIdx !== null) showDetail(openIdx); } catch (e) { /* economies not set up yet */ } });
   const viewYear = () => +String(D.asof_view || D.asof?.today || new Date().toISOString()).slice(0, 4);
   const LAYER_SRC = { score: 'Score', gdp: 'GDP growth', inflation: 'Inflation', unemployment: 'Unemployment', debt: 'Government debt', ca: 'Current account', tb: 'Trade balance', power: 'Electricity demand', trade: 'Port cargo', poverty: 'Extreme poverty', get dev() { return DV?.keys?.[DKEY]?.label || 'Development'; } };
   let layer = 'score', paths, cpG, proj, drawCP = () => {};
@@ -449,7 +500,7 @@
       <p class="plain">${esc(plain(e)) || 'Detailed data fills in after the first automated run.'}</p>
       ${e.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(e.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25, sg(v, 0, ''))}</div>`).join('')}</div>` : ''}
       ${live ? `<h3>Live indicators</h3><ul class="facts">${live}</ul>` : ''}${mth ? `<h3>Formulas</h3><ul class="facts">${mth}</ul>` : ''}
-      ${gov ? `<h3>Government and trade</h3><ul class="facts">${gov}</ul>` : ''}${vit ? `<h3>People and health</h3><ul class="facts">${vit}</ul>` : ''}${(() => { const dv = devFacts(e.iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${F.html()}
+      ${gov ? `<h3>Government and trade</h3><ul class="facts">${gov}</ul>` : ''}${vit ? `<h3>People and health</h3><ul class="facts">${vit}</ul>` : ''}${(() => { const dv = devFacts(e.iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${DV ? mixBlocks(e.iso3, F) : ''}${F.html()}
       <div class="dyr"><h3>Year by year</h3><select id="dysel" aria-label="Calendar year"></select></div><ul class="facts" id="dyfacts"></ul><div id="dyfoot"></div></div>`;
     detailYear(e.iso3);
   }
@@ -500,11 +551,12 @@
         <span class="pill ${esc(r.label)}">${esc(r.label)}</span><span class="mono small" style="margin-left:10px">SCORED FROM COMPLETED-YEAR ANNUAL DATA (IMF WEO; WORLD BANK WHERE IMF HAS NONE)${c.trade || c.power ? ' + LIVE PORT/POWER DATA' : ''}</span>
         ${r.contrib ? `<h3>What moved the score (points vs 50)</h3><div class="bars contrib">${Object.entries(r.contrib).map(([k, v]) => `<div class="row"><div>${esc(k)}</div>${bar(v, v < 0 ? 'var(--neg)' : 'var(--pos)', 25, sg(v, 0, ''))}</div>`).join('')}</div>` : ''}`;
     } else {
-      top = `<p class="plain"><b>Not scored:</b> fewer than two pillars available (${PN.join(', ')}). ${have.length ? `Available: ${esc(have.join(', '))}.` : 'None of the four is available.'}</p>`;
+      const old_ = Object.entries(r.why_old || {}).map(([k, y]) => `${k} (latest ${y})`);
+      top = `<p class="plain"><b>Not scored:</b> fewer than two pillars available (${PN.join(', ')}). ${have.length ? `Available: ${esc(have.join(', '))}.` : 'None of the four is available.'}${old_.length ? ` Published but too old to score (scores use completed years no more than 2 years old): ${esc(old_.join(', '))}.` : ''}</p>`;
     }
     $('detail').innerHTML = `<div class="detail"><div class="dtop"><button class="back" id="dback">← Map</button><button class="back" id="dclose" aria-label="Close">✕</button></div><h3>${esc(r.name)}</h3>${top}
       <h3>Output, prices and jobs</h3><ul class="facts">${out}</ul><h3>Live activity</h3><ul class="facts">${live}</ul>
-      <h3>Government and trade</h3><ul class="facts">${gov}</ul><h3>People and health</h3><ul class="facts">${ppl}</ul>${(() => { const dv = devFacts(iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${F.html()}
+      <h3>Government and trade</h3><ul class="facts">${gov}</ul><h3>People and health</h3><ul class="facts">${ppl}</ul>${(() => { const dv = devFacts(iso3, F); return dv ? `<h3>Development and environment</h3><ul class="facts">${dv}</ul>` : ''; })()}${DV ? mixBlocks(iso3, F) : ''}${F.html()}
       <div class="dyr"><h3>Year by year</h3><select id="dysel" aria-label="Calendar year"></select></div><ul class="facts" id="dyfacts"></ul><div id="dyfoot"></div></div>`;
     $('dback').addEventListener('click', () => $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }));
     $('dclose').addEventListener('click', () => { $('detail').innerHTML = ''; $('map').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
@@ -944,7 +996,7 @@
   }
   function refresh() {
     openIdx = null; $('detail').innerHTML = '';
-    drawCP(); renderAll(); renderYears(); renderDev();
+    drawCP(); renderAll(); renderYears(); renderDev(); renderMix();
     if (scIso && $('schart').innerHTML) showHist(scIso);
   }
   if (ASOF) {

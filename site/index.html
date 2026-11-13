@@ -15,7 +15,7 @@
 <header class="bar">
   <div class="brand"><span class="dot"></span>WORLD ECONOMY <b>LIVE</b></div>
   <nav>
-    <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Debt</a><a href="#years">Years</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#development">Development</a><a href="#method">Method</a>
+    <a href="#map">Map</a><a href="#changes">Changes</a><a href="#economies">Economies</a><a href="#scorecard">Scorecard</a><a href="#fundamentals">Balances</a><a href="#years">Years</a><a href="#trade">Trade</a><a href="#energy">Energy</a><a href="#commodities">Commodities</a><a href="#markets">Markets</a><a href="#people">People</a><a href="#development">Development</a><a href="#method">Method</a>
   </nav>
   <button class="navbtn mono" id="navbtn" type="button" aria-expanded="false" aria-label="Sections">Sections ▾</button>
   <div class="upd mono" id="upd">—</div>
@@ -67,7 +67,7 @@
   </section>
 
   <section id="fundamentals">
-    <h2><span>04</span>Debt, deficits and balances</h2>
+    <h2><span>04</span>Balances: debt, deficits and the current account</h2>
     <p class="sub">Annual. IMF World Economic Outlook (current-year estimates marked *) and World Bank. Changes are shown for 1Y and longer.</p>
     <div class="tbl" id="fund"></div>
     <div id="f-fund"></div>
@@ -114,6 +114,12 @@
     <p class="sub">Power use is one of the fastest real-time signals of economic activity. Latest month's demand. The change compares the latest 3 months with the same 3 months 1 or more years earlier (seasonal data, so 1Y and longer). The trend line is 3-month demand vs a year earlier. Ember.</p>
     <div class="tbl" id="power"></div>
     <div id="f-power"></div>
+    <h3>Energy use and electricity by source</h3>
+    <p class="sub">What each country runs on. Energy use is all primary energy (transport, heating, industry and power) split by fuel; electricity is power generation split by source. Latest year each country has, largest economies first. U.S. Energy Information Administration and Ember.</p>
+    <div class="filters" id="mixsel"><button data-m="energy" class="on">Energy use</button><button data-m="elec">Electricity</button><input id="mq" placeholder="Search country" autocomplete="off"></div>
+    <div id="mixleg"></div>
+    <div class="tbl" id="mixtbl"></div>
+    <div id="f-mix"></div>
     <h3>Rail and air freight</h3>
     <p class="sub">Goods moved by rail and air. Changes compare the same months 1 or more years earlier (seasonal data, so 1Y and longer). United States: Bureau of Transportation Statistics (monthly). Europe: Eurostat air freight (monthly, last 3 months) and rail freight (quarterly). Canada: Statistics Canada railway carloadings (monthly). Freight growth feeds each country's output pillar alongside electricity demand. Global air cargo (IATA) is paid data and isn't included.</p>
     <div class="tbl" id="transport"></div>
@@ -162,7 +168,7 @@
 
   <section id="development">
     <h2><span>11</span>Development and environment</h2>
-    <p class="sub">How countries compare on living standards, health, work, research and emissions. Pick an indicator: the table ranks every country by its latest published year, beside its value about 10 years earlier. Tap a country for its full readout, or color the map with it.</p>
+    <p class="sub">How countries compare on living standards, health, work, research, energy and emissions. Pick an indicator: the table ranks every country by its latest published year, beside its value about 10 years earlier. Tap a country for its full readout, or color the map with it.</p>
     <div class="filters devsel" id="devsel"></div>
     <div class="filters"><input id="dq" placeholder="Search country" autocomplete="off"><button id="devmap" type="button">Show on map</button></div>
     <p class="plain" id="devabout"></p>
@@ -202,7 +208,8 @@
         <li><b>European Central Bank</b>: euro foreign exchange reference rates (Source: ECB statistics), converted by this site into US-dollar pairs.</li>
         <li><b>Federal Reserve Bank of New York</b>: effective federal funds rate. The Effective Federal Funds Rate is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the Effective Federal Funds Rate by World Economy Live, does not sanction or endorse any particular republication, and has no liability for your use.</li>
         <li><b>U.S. Department of the Treasury</b> (daily yield curves; Fiscal Data: Debt to the Penny, Monthly Treasury Statement) and <b>U.S. Bureau of Transportation Statistics</b>: U.S. government works, public domain.</li>
-        <li><b>Ember</b>: monthly electricity data, CC BY 4.0 (electricity demand; low-carbon share of generation by year).</li>
+        <li><b>Ember</b>: monthly and yearly electricity data, CC BY 4.0 (electricity demand; electricity generation by source; low-carbon share).</li>
+        <li><b>U.S. Energy Information Administration</b>: International Energy Statistics, energy consumption by fuel (oil, gas, coal, nuclear, renewables), a U.S. government work in the public domain.</li>
         <li><b>Our World in Data</b> (its processing CC BY 4.0; each series keeps its original licence): Maddison Project Database 2023 (Bolt and van Zanden, CC BY 4.0), Penn World Table 11.0 (Feenstra, Inklaar and Timmer, CC BY 4.0), UNDP Human Development Report (CC BY 3.0 IGO), Global Carbon Project, Global Carbon Budget (CC BY 4.0), and Jones et al., National contributions to climate change (CC BY 4.0).</li>
         <li><b>Figures the World Bank republishes</b> in World Development Indicators: FAO (undernourishment, CC BY 4.0), ILO modelled estimates (labour force, CC BY 4.0), UN IGME (child mortality), World Bank Poverty and Inequality Platform, and UNESCO Institute for Statistics (R&amp;D spending, CC BY-SA 3.0 IGO; this site's changes to it are limited to selecting the latest year and the year about 10 years earlier).</li>
         <li><b>Not used</b>, because their terms do not allow open reuse or state no licence: Energy Institute Statistical Review of World Energy, WHO-led series, IEA, and the World Inequality Database.</li>

@@ -458,6 +458,20 @@ def annual_score(iso3, ports, power):
     return float(np.clip(50 + 15 * np.mean(list(zs.values())), 0, 100)), {PILLAR_NAMES[k]: round(15 * v / len(zs), 2) for k, v in zs.items()}
 
 
+def stale_pillars(iso3):
+    """Pillars with annual data whose latest completed year is too old to score: {pillar word: latest year}."""
+    H, out = ANNUAL_HIST.get(iso3, {}), {}
+    for k, word in (("gdp_growth", "output"), ("unemployment_a", "jobs"), ("inflation_a", "prices")):
+        s = H.get(k)
+        if s is None:
+            continue
+        s = s.dropna()
+        s = s[s.index.year < TODAY.year]
+        if len(s) and done_years(H.get(k)) is None:
+            out[word] = int(s.index[-1].year)
+    return out
+
+
 def unscored_reason(iso3, ports, power):
     """Why a country on the map has no score: which of the four pillars have data."""
     H, have = ANNUAL_HIST.get(iso3, {}), []
@@ -471,6 +485,35 @@ def unscored_reason(iso3, ports, power):
     if ports and iso3 in ports.get("economies", {}):
         have.append("trade")
     return have
+
+
+def unit_check(allc, key="gdp_usd", ref="gdp_usd_wb"):
+    """Guard against a source changing units (e.g. billions vs full dollars): compare WEO GDP in US$ with the
+    World Bank's for the same countries and years; if the median ratio is off by a power of 1,000, rescale and log."""
+    ratios = []
+    for iso3, H in ANNUAL_HIST.items():
+        a, b = H.get(key), H.get(ref)
+        if a is None or b is None or a is b:
+            continue
+        j = pd.concat([a.rename("a"), b.rename("b")], axis=1).dropna()
+        j = j[(j.a > 0) & (j.b > 0)]
+        ratios += list((j.a / j.b).values[-5:])
+    if len(ratios) < 20:
+        return
+    med = float(np.median(ratios))
+    k = int(round(np.log10(med) / 3)) * 3
+    if k == 0:
+        S.log(f"weo.{key}.units", True, f"matches World Bank (median ratio {med:.3f})")
+        return
+    f = 10.0 ** -k
+    for iso3, H in ANNUAL_HIST.items():
+        if H.get(key) is not None and H.get(key) is not H.get(ref):
+            H[key] = H[key] * f
+            if key in allc.get(iso3, {}):
+                r = allc[iso3][key]
+                r["value"] = r["value"] * f
+                r["chg"] = chg(H[key], ANNUAL_KIND.get(key, "pct"), "A")
+    S.log(f"weo.{key}.units", False, f"rescaled by 1e{-k}: median ratio to World Bank was {med:.3g}")
 
 
 def annual_block():
@@ -517,6 +560,7 @@ def annual_block():
             S.log(f"worldbank.{ind}", True, f"{df.iso3.nunique()} countries")
         except Exception as e:
             S.log(f"worldbank.{ind}", False, e)
+    unit_check(allc)
     # fall back to the World Bank when WEO has no series for a country (same object, so packs can tell)
     for iso3, d in allc.items():
         for key, wbk in R.WB_FALLBACK.items():
@@ -1287,6 +1331,9 @@ def main():
                 row.update(score=sc_, label=label(sc_), basis="annual", contrib=contrib_)
             else:
                 row["why"] = unscored_reason(iso3, ports, act)
+                old = stale_pillars(iso3)
+                if old:
+                    row["why_old"] = old
         if iso3 in econ:
             e = econ[iso3]
             row.update(name=e["name"], score=e["score"], label=e["label"], tracked=True)
@@ -1420,6 +1467,9 @@ def main():
         # the score line in series.json changes every day and is already in the heartbeat: keep it out of the
         # archived copy so that copy is only stored again when a monthly series changes
         arch_series = json.dumps(clean({k: {c: v for c, v in s_.items() if c != "score"} for k, s_ in SERIES_OUT.items()}), separators=(",", ":"))
+        fixed = PK.repair_gdp_units(ARCH, INPUTS)
+        if fixed:
+            S.log("site.archive_repair", True, f"{fixed} archived GDP values rescaled (US$ vs billions, {', '.join(PK.BAD_GDP_DAYS)})")
         PK.archive_site(day, hb_text, arch_series, annual_text, ARCH)
         n_in = PK.archive_inputs(day, RAW, INPUTS)
         S.log("site.archive", True, f"snapshot {day}; {n_in} new or revised input observations")

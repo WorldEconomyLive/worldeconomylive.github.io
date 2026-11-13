@@ -26,7 +26,7 @@ Any push that changes `pipeline/` or `site/` also triggers a run.
 | US Treasury yields, real yields, federal debt | U.S. Department of the Treasury |
 | Effective fed funds rate | Federal Reserve Bank of New York |
 | Ports and chokepoints | IMF PortWatch |
-| Development and environment (section 11, readouts, Poverty and Development map layers) | World Bank WDI (poverty, child mortality, learning-adjusted schooling, FAO undernourishment, ILO labour force, UNESCO UIS R&D spending); Our World in Data (Maddison 2023, Penn World Table 11.0, UNDP HDI, Global Carbon Budget, Jones et al.); Ember (low-carbon electricity share) |
+| Development and environment (section 11, readouts, Poverty and Development map layers) | World Bank WDI (poverty, child mortality, learning-adjusted schooling, FAO undernourishment, ILO labour force, UNESCO UIS R&D spending); Our World in Data (Maddison 2023, Penn World Table 11.0, UNDP HDI, Global Carbon Budget, Jones et al.); Ember (electricity generation by source, low-carbon share); U.S. EIA International Energy Statistics (energy use by fuel, public domain) |
 
 Not used, because their terms do not allow open reuse or state no licence: Energy Institute Statistical
 Review of World Energy, WHO-led series, IEA, World Inequality Database. UNESCO UIS (R&D spending) is

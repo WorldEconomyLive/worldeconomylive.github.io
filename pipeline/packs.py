@@ -222,3 +222,70 @@ def archive_inputs(day: str, raw, folder: Path):
             diff[k] = ch
     _gz(folder / f"{day}.json.gz", json.dumps({"day": day, "baseline": not state, "diff": diff}, separators=(",", ":")))
     return sum(len(v) for v in diff.values())
+
+
+# ---- one-time repair: on these days the IMF data-portal route sent GDP in US$ while the site assumed billions,
+# so archived GDP figures came out 1e9 too large. Idempotent: only values above 1e15 (no GDP is $1,000tn) change.
+BAD_GDP_DAYS = ("2026-11-13",)
+_GDP_CAP = 1e15
+
+
+def _fix_num(v):
+    return v / 1e9 if isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v) > _GDP_CAP else v
+
+
+def _fix_gdp(x):
+    """Walk a site JSON object; scale every 'gdp_usd' number (plain, {'value'}, or [y0, [values]]) that is too large."""
+    n = 0
+    if isinstance(x, dict):
+        for k, v in x.items():
+            if k == "gdp_usd":
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    nv = _fix_num(v); n += nv != v; x[k] = nv
+                elif isinstance(v, dict) and "value" in v:
+                    for kk in ("value", "ten_years_ago", "year_ago"):
+                        if kk in v:
+                            nv = _fix_num(v[kk]); n += nv != v[kk]; v[kk] = nv
+                elif isinstance(v, list) and len(v) == 2 and isinstance(v[1], list):
+                    new = [_fix_num(a) for a in v[1]]; n += sum(a != b for a, b in zip(new, v[1])); v[1] = new
+            else:
+                n += _fix_gdp(v)
+    elif isinstance(x, list):
+        for v in x:
+            n += _fix_gdp(v)
+    return n
+
+
+def repair_gdp_units(arch: Path, inputs: Path):
+    """Fix the archived site snapshots and input files of BAD_GDP_DAYS. Returns the number of values changed."""
+    n = 0
+    idx_p = arch / "index.json"
+    idx = json.loads(idx_p.read_text()) if idx_p.exists() else {"dates": {}}
+    files = set()
+    for day in BAD_GDP_DAYS:
+        rec = idx["dates"].get(day) or {}
+        files |= {arch / rec[k] for k in ("h", "a") if rec.get(k)}
+    for p in sorted(files):
+        if not p.exists():
+            continue
+        with gzip.open(p, "rt") as f:
+            obj = json.load(f)
+        c = _fix_gdp(obj)
+        if c:
+            _gz(p, json.dumps(obj, separators=(",", ":")))
+            n += c
+    for day in BAD_GDP_DAYS:
+        p = inputs / f"{day}.json.gz"
+        if not p.exists():
+            continue
+        with gzip.open(p, "rt") as f:
+            obj = json.load(f)
+        c = 0
+        for k, obs in obj.get("diff", {}).items():
+            if k.endswith("/gdp_usd"):
+                for d, v in obs.items():
+                    nv = _fix_num(v); c += nv != v; obs[d] = nv
+        if c:
+            _gz(p, json.dumps(obj, separators=(",", ":")))
+            n += c
+    return n
