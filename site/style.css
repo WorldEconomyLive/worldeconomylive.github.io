@@ -134,5 +134,5 @@ body.navtight nav{gap:10px}body.navtight nav a{letter-spacing:.02em;font-size:10
 td[style*="text-align: left"] .spk{margin-left:0}td[style*="text-align: left"] .mixbar{margin-left:0}
 /* map layer buttons never run into the world score: beside it on wide screens, along the bottom of the map otherwise */
 .layers{left:440px}
-@media (max-width:1240px) and (min-width:761px){.layers{top:auto;left:22px;right:22px;bottom:46px;justify-content:center}}
+.hero.lbottom .layers{top:auto;left:22px;right:22px;bottom:46px;justify-content:center}
 @media (max-width:760px){.layers{left:12px}}

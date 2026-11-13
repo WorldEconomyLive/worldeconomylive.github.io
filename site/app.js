@@ -467,6 +467,10 @@
     mapFoot();
   }
   document.querySelectorAll('#layers button').forEach((b) => b.addEventListener('click', () => { layer = b.dataset.l; paint(); }));
+  // layer buttons sit in one row beside the world score; if they would wrap, they move to one centred block along the bottom of the map
+  const fitLayers = () => { const hero = document.querySelector('.hero'), L = $('layers'); if (!hero || !L || innerWidth <= 760) { hero?.classList.remove('lbottom'); return; }
+    hero.classList.remove('lbottom'); const b = L.querySelector('button'); if (b && L.offsetHeight > b.offsetHeight * 1.5) hero.classList.add('lbottom'); };
+  addEventListener('resize', fitLayers); fitLayers(); document.fonts?.ready.then(fitLayers);
   const tipLine = (lab, val, o, good, abs) => `<br>${lab} ${val}${o ? ' <span class="tc">' + (ctext(o, abs) ?? 'n/a') + '</span>' : ''}`;
   try {
     const world = await (await fetch('vendor/countries-110m.json')).json();
