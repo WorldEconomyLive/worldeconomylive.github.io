@@ -1536,6 +1536,10 @@ def main():
         S.log("site.packs", True, "past-date data written")
     except Exception as ex:
         S.log("site.packs", False, ex)
+    try:
+        PK.write_terms(OUT.parent, PACKS, ARCH, INPUTS)
+    except Exception as ex:
+        S.log("site.terms", False, ex)
     ok = sum(v["ok"] for v in S.STATUS.values())
     print(f"Wrote {OUT} | sources ok {ok}/{len(S.STATUS)} | world score {world} | map countries {len(map_rows)}")
     for k, v in S.STATUS.items():

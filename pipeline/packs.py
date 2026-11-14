@@ -115,6 +115,71 @@ def write_packs(raw, meta, scores, out: Path):
     _dump(out / "meta.json", meta)
 
 
+# ---------------------------------------------------------------- terms that travel with the public data files
+# Every folder of data the site publishes carries this note, so anyone who opens or copies the files sees the
+# sources' terms (the IMF asks distributors of its data to make reasonable efforts to pass its terms on).
+TERMS = """WORLD ECONOMY LIVE: TERMS FOR THE DATA IN THIS FOLDER
+
+These files are the data the website loads to draw its pages: published figures from the sources
+below, plus the site's own calculations (changes, windows, ratios, scores), which the site labels as
+such. No source endorses this site or is responsible for these calculations. Each source's terms
+continue to apply to its data. If you reuse any of it, credit the source and follow its terms.
+Provided as is, without warranty. Nothing here is investment advice.
+
+INTERNATIONAL MONETARY FUND: World Economic Outlook database; PortWatch
+  Source: International Monetary Fund, World Economic Outlook database, https://www.imf.org/en/Publications/WEO
+  Source: International Monetary Fund, PortWatch, https://portwatch.imf.org
+  Reproduced under the IMF Copyright and Usage terms for statistical data:
+  https://www.imf.org/en/about/copyright-and-terms
+  Your reuse is subject to those terms. Commercial reuse of IMF data requires permission from copyright@imf.org.
+
+BANK FOR INTERNATIONAL SETTLEMENTS: central bank policy rates
+  Source: Bank for International Settlements, https://data.bis.org
+  Terms: https://www.bis.org/terms_statistics.htm
+  The BIS does not warrant or guarantee the accuracy, completeness or fitness for any contemplated purpose
+  of these statistics, and nothing in them is investment advice. Use in a commercial product must not
+  result in any additional charge to its users.
+
+OECD: inflation, unemployment, industrial production, GDP, bond yields, share prices, merchandise trade
+  Source: OECD Data Explorer, https://data-explorer.oecd.org
+  Terms: https://www.oecd.org/en/about/terms-conditions.html
+
+WORLD BANK: World Development Indicators; Commodity Price Data (The Pink Sheet). CC BY 4.0.
+  Source: World Bank. No endorsement by the World Bank is implied.
+  The R&D spending series (UNESCO Institute for Statistics, via the World Bank) is CC BY-SA 3.0 IGO:
+  adaptations of it must be shared under the same licence.
+
+EMBER: monthly and yearly electricity data. CC BY 4.0. Source: Ember, https://ember-energy.org
+
+OUR WORLD IN DATA: processing CC BY 4.0; each series keeps its original licence: Maddison Project
+  Database 2023 (CC BY 4.0), Penn World Table 11.0 (CC BY 4.0), UNDP Human Development Report
+  (CC BY 3.0 IGO), Global Carbon Budget (CC BY 4.0), Jones et al., National contributions to climate change.
+
+EUROSTAT: euro-area fallbacks, air and rail freight. Source: Eurostat.
+  Eurostat bears no responsibility for this reuse.
+
+EUROPEAN CENTRAL BANK: euro reference exchange rates. Source: ECB statistics.
+
+FEDERAL RESERVE BANK OF NEW YORK: effective federal funds rate. The Effective Federal Funds Rate is
+  subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for
+  publication of the Effective Federal Funds Rate by World Economy Live, does not sanction or endorse
+  any particular republication, and has no liability for your use.
+
+U.S. GOVERNMENT WORKS (public domain): Department of the Treasury (yield curves, Fiscal Data),
+  Bureau of Transportation Statistics, Commodity Futures Trading Commission (Commitments of Traders),
+  Energy Information Administration (International Energy Statistics).
+
+STATISTICS CANADA: adapted from Statistics Canada, Table 23-10-0216-01, Railway carloadings, under the
+  Statistics Canada Open Licence. This does not constitute an endorsement by Statistics Canada of this product.
+"""
+
+
+def write_terms(*folders: Path):
+    for f in folders:
+        f.mkdir(parents=True, exist_ok=True)
+        (f / "TERMS.txt").write_text(TERMS)
+
+
 # ---------------------------------------------------------------- daily archive
 def _gz(path: Path, text: str):
     path.parent.mkdir(parents=True, exist_ok=True)
